@@ -56,3 +56,15 @@ export async function getAllFiles() {
   return await db.select<any[]>("SELECT * FROM files WHERE embedding IS NOT NULL");
 }
 
+export async function getAllFilesMetadata() {
+  const db = await getDb();
+  return await db.select<any[]>("SELECT id, path, filename, length(content) as content_length FROM files WHERE embedding IS NOT NULL");
+}
+
+export async function deleteFileRecord(id: number) {
+  const db = await getDb();
+  console.log("Attempting to delete ID:", id);
+  const result = await db.execute("DELETE FROM files WHERE id = $1", [id]);
+  console.log("Delete query result:", result);
+}
+

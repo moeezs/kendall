@@ -51,6 +51,10 @@
       "identifier": "fs:allow-remove",
       "allow": [{ "path": "$DESKTOP/kendall/**" }]
     },
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [{ "path": "$DESKTOP/kendall/**" }]
+    },
     "sql:allow-execute",
     "sql:allow-load",
     "sql:allow-select"

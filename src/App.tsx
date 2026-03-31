@@ -4,10 +4,11 @@ import { watch, exists, readDir, rename, mkdir } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
-import { saveFileRecord } from "./services/database";
+import { saveFileRecord, getAllFilesMetadata, deleteFileRecord } from "./services/database";
 import { askKendallOS, categorizeBatch } from "./services/rag";
 import { NavBar } from "@/components/ui/navbar";
-import { Home, MessageCircle, Briefcase } from "lucide-react";
+import { Home, MessageCircle, Briefcase, Database } from "lucide-react";
+import { revealItemInDir } from "@tauri-apps/plugin-opener";
 
 function App() {
   const recentFilesRef = useRef<Map<string, number>>(new Map());
@@ -26,11 +27,29 @@ function App() {
 
   // Tab UI
   const [activeTab, setActiveTab] = useState("Home");
+  const [dbFiles, setDbFiles] = useState<any[]>([]);
+
   const navItems = [
       { name: 'Home', url: '#', icon: Home },
       { name: 'Chat', url: '#', icon: MessageCircle },
       { name: 'Work', url: '#', icon: Briefcase },
+      { name: 'DB', url: '#', icon: Database },
   ];
+
+  useEffect(() => {
+    if (activeTab === "DB") {
+      refreshDbFiles();
+    }
+  }, [activeTab]);
+
+  const refreshDbFiles = async () => {
+    try {
+      const files = await getAllFilesMetadata();
+      setDbFiles(files);
+    } catch (err) {
+      console.error("Failed to load DB files:", err);
+    }
+  };
 
   const handleAsk = async () => {
     if (!query.trim()) return;
@@ -309,6 +328,63 @@ function App() {
         {activeTab === "Work" && (
           <div className="flex-1 flex items-center justify-center">
             <p className="text-gray-500 text-lg">Work space coming soon...</p>
+          </div>
+        )}
+
+        {activeTab === "DB" && (
+          <div className="flex-1 p-5 overflow-y-auto">
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-xl font-bold">Database Index</h2>
+              <button 
+                onClick={refreshDbFiles}
+                className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm cursor-pointer"
+              >
+                Refresh
+              </button>
+            </div>
+            
+            {dbFiles.length === 0 ? (
+              <p className="text-gray-500 text-center">No files indexed yet.</p>
+            ) : (
+              <div className="flex flex-col gap-3">
+                {dbFiles.map((f, idx) => (
+                  <div key={idx} className="flex flex-col gap-2 p-4 border border-gray-200 rounded-lg bg-[#7c7c80] shadow-sm">
+                    <div className="flex justify-between items-start">
+                      <div className="font-semibold">{f.filename}</div>
+                      <div className="flex gap-2 text-xs">
+                        <button 
+                          onClick={() => revealItemInDir(f.path)}
+                          className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded cursor-pointer transition-colors"
+                        >
+                          Reveal in Finder
+                        </button>
+                        <button 
+                          onClick={async () => {
+                            try {
+                              console.log("Delete clicked for ID:", f.id);
+                              await deleteFileRecord(f.id);
+                              await refreshDbFiles();
+                            } catch (err) {
+                              console.error("Could not delete:", err);
+                              alert("Failed to delete record. Check console.");
+                            }
+                          }}
+                          className="px-2 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded cursor-pointer transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                    <div className="text-sm text-gray-200 truncate" title={f.path}>
+                      {f.path}
+                    </div>
+                    <div className="text-xs text-gray-100">
+                      Tokens: {(f.content_length || 0).toLocaleString()} chars
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
