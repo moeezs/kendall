@@ -71,13 +71,15 @@ function App() {
 
         try {
           // Extract
-          //const text = await extractTextFromFile(filePath);
+          console.log("extracting text");
+          const text = await extractTextFromFile(filePath);
 
+          console.log("vectorizing text");
           // Vectorize
-          //const vector = await generateEmbedding(text);
+          const vector = await generateEmbedding(text);
           
           console.log("✅ Processed:", filePath.split('/').pop());
-          //console.log("Vector preview:", vector.slice(0, 5));
+          console.log("Vector preview:", vector.slice(0, 5));
           
           // DB
         } catch (err) {
@@ -102,7 +104,15 @@ function App() {
     startWatching().then((fn) => { unwatchFn = fn; });
 
     // Cleanup
-    return () => { if (unwatchFn) unwatchFn(); };
+    return () => { 
+      if (unwatchFn) {
+        try {
+          unwatchFn();
+        } catch (e) {
+          console.warn("Unwatch err:", e);
+        }
+      } 
+    };
   }, []);
 
 
