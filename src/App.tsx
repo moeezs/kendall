@@ -13,6 +13,14 @@ import { ChatSection } from "@/components/chat";
 import { WorkSection } from "@/components/work";
 import { DbSection } from "@/components/db";
 
+export interface SystemLog {
+  action: string;
+  path: string;
+  time: string;
+  icon: string;
+  color: string;
+}
+
 function App() {
   const recentFilesRef = useRef<Map<string, number>>(new Map());
   
@@ -22,6 +30,11 @@ function App() {
 
   // Directory UI states
   const [activeFolders, setActiveFolders] = useState<string[]>([]);
+  
+  // App-wide logs
+  const [logs, setLogs] = useState<SystemLog[]>([
+    { action: "System started watching Local Storage", path: "/Dump", time: "Just now", icon: "visibility", color: "text-[#adc6ff]" }
+  ]);
 
   // Tab UI
   const [activeTab, setActiveTab] = useState("Home");
@@ -108,6 +121,14 @@ function App() {
         }
 
         console.log("✅ NEW FILE: ", fileName);
+        
+        setLogs(prev => [{
+          action: `Detected new file: ${fileName}`,
+          path: "/Dump",
+          time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+          icon: "description",
+          color: "text-gray-400"
+        }, ...prev]);
 
         try {
           // Extract Text
@@ -158,6 +179,14 @@ function App() {
                   await rename(file.filePath, newFilePath);
                   finalFilePath = newFilePath;
                   console.log(`Moved ${file.fileName} to ${newFilePath}`);
+                  
+                  setLogs(prev => [{
+                    action: `Relocated ${file.fileName} to /${targetFolderName}`,
+                    path: `/${targetFolderName}`,
+                    time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                    icon: "move_item",
+                    color: "text-[#adc6ff]"
+                  }, ...prev]);
                 }
 
                 console.log(`vectorizing text for ${file.fileName}`);
@@ -166,6 +195,14 @@ function App() {
                 console.log(`saving ${file.fileName} to db...`);
                 await saveFileRecord(finalFilePath, file.fileName, file.text, Array.from(vector));
                 console.log(`✅ Saved ${file.fileName} to DB!`);
+                
+                setLogs(prev => [{
+                  action: `Indexed ${file.fileName}`,
+                  path: targetFolderName && targetFolderName !== "Dump" ? `/${targetFolderName}` : "/Dump",
+                  time: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+                  icon: "database",
+                  color: "text-green-400"
+                }, ...prev]);
               }
             } catch (err) {
               console.error("Batch processing error:", err);
@@ -207,11 +244,11 @@ function App() {
 
 
   return (
-    <div className="p-5 font-sans flex flex-col h-screen">
+    <div className="bg-[#18181b] text-[#e7e5e5] h-screen w-screen overflow-hidden flex flex-col font-sans selection:bg-[#adc6ff]/30">
       <NavBar items={navItems} activeTab={activeTab} setActiveTab={setActiveTab} />
       
-      <div className="mt-15 flex-1 flex gap-10 overflow-hidden">
-        {activeTab === "Home" && <HomeSection activeFolders={activeFolders} />}
+      <div className="pt-20 px-8 flex-1 flex gap-10 overflow-hidden">
+        {activeTab === "Home" && <HomeSection logs={logs} setLogs={setLogs} activeFolders={activeFolders} setActiveFolders={setActiveFolders} />}
         {activeTab === "Chat" && <ChatSection />}
         {activeTab === "Work" && <WorkSection />}
         {activeTab === "DB" && <DbSection />}

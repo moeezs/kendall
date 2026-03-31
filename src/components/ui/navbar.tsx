@@ -30,13 +30,12 @@ export function NavBar({ items, className, activeTab, setActiveTab }: NavBarProp
     }, [])
 
     return (
-        <div
-            className={cn(
-                "fixed bottom-0 sm:top-0 left-1/2 -translate-x-1/2 z-200 mb-6 sm:pt-6 h-max",
-                className,
-            )}
-        >
-            <div className="flex items-center gap-3 bg-white/5 border border-gray-200/50 backdrop-blur-lg py-1 px-1 rounded-full shadow-lg">
+        <nav className="fixed top-0 w-full z-50 flex items-center justify-between px-6 h-16 bg-[#18181b] ">
+            <div className="flex items-center gap-8">
+                <span className="text-xl font-bold text-slate-100 tracking-tighter">Kendall</span>
+            </div>
+            
+            <div className="flex items-center gap-2 bg-white/5 border border-white/10 backdrop-blur-lg py-1 px-1 rounded-full shadow-lg">
                 {items.map((item) => {
                     const Icon = item.icon
                     const isActive = activeTab === item.name
@@ -44,11 +43,12 @@ export function NavBar({ items, className, activeTab, setActiveTab }: NavBarProp
                     return (
                         <a
                             key={item.name}
-                            onClick={() => setActiveTab(item.name)}
+                            onClick={(e) => { e.preventDefault(); setActiveTab(item.name); }}
+                            href="#"
                             className={cn(
                                 "relative cursor-pointer text-sm font-semibold rounded-full transition-colors bg-transparent px-5 py-2",
-                                "text-gray-800",
-                                isActive
+                                "text-gray-400 hover:text-white",
+                                isActive ? "text-white" : ""
                             )}
                         >
                             <span className="hidden md:inline text-white">{item.name}</span>
@@ -58,7 +58,7 @@ export function NavBar({ items, className, activeTab, setActiveTab }: NavBarProp
                             {isActive && (
                                 <motion.div
                                     layoutId="lamp"
-                                    className="absolute inset-0 w-full bg-[#7c7c80] rounded-full -z-10"
+                                    className="absolute inset-0 w-full bg-[#191919] rounded-full -z-10"
                                     initial={false}
                                     transition={{
                                         type: "spring",
@@ -71,6 +71,6 @@ export function NavBar({ items, className, activeTab, setActiveTab }: NavBarProp
                     )
                 })}
             </div>
-        </div>
+        </nav>
     )
 }
