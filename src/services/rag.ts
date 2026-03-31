@@ -52,35 +52,39 @@ export async function searchContext(query: string, topK: number = 3) {
 }
 
 // generation
-export async function askKendallOS(query: string) {
+export async function askKendallOS(query: string, chatHistory: {role: string, content: string}[] = []) {
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("Missing Gemini API Key. Please add it to your .env file.");
 
   console.log("Searching local database for context...");
   const contexts = await searchContext(query, 3);
+  
+  // Filter out low scores so we don't include irrelevant sources
+  const relevantContexts = contexts.filter(c => c.score > 0.25);
+  
   const allFiles = await getAllFiles();
   const totalFiles = allFiles.length;
   
-  if (contexts.length === 0 || contexts[0].score < 0) {
-    return {
-      answer: "I don't have any documents indexed to answer that question yet. Try moving some files into the Dump folder!",
-      contextFiles: []
-    };
-  }
-
   // Format context snippets
-  const contextText = contexts.map((c) => `[Source: ${c.filename}]\n${(c.content || '').substring(0, 1500)}...`).join("\n\n");
+  const contextText = relevantContexts.length > 0
+    ? relevantContexts.map((c) => `[Source: ${c.filename}]\n${(c.content || '').substring(0, 1500)}...`).join("\n\n")
+    : "No relevant documents found in index.";
+
+  let historyText = "";
+  if (chatHistory.length > 0) {
+    historyText = "Previous Conversation History:\n" + chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'Kendall'}: ${msg.content}`).join("\n") + "\n\n";
+  }
 
   const prompt = `You are Kendall OS, a helpful, conversational, and concise personal AI assistant. 
 You are currently indexing and have access to ${totalFiles} local files from the user's system.
 
 Guidelines:
 - Act like a natural personal assistant. Keep responses brief, friendly, and conversational. Do not write long essays.
-- If the user asks general questions about you or your system (e.g., "how many files do you have?"), answer naturally using the information provided above.
+- If the user asks general questions about you or your system, answer naturally using the information provided above, or mention the past conversation in the context.
 - When the user asks about their data, use the provided "Context" to answer. 
-- If they ask about their data and the answer isn't in the Context, politely mention that you didn't find anything relevant in their parsed files.
+- Very Important: If the provided Context documents are NOT relevant to the user's query, do not hallucinate an answer based on them. Just answer naturally or say you couldn't find it in their files.
 
-Context from User's Files:
+${historyText}Context from User's Files:
 ${contextText}
 
 User: "${query}"`;
@@ -93,7 +97,8 @@ User: "${query}"`;
     const result = await model.generateContent(prompt);
     return {
       answer: result.response.text(),
-      contextFiles: contexts.map((c) => c.filename)
+      // Return the full paths so they can be opened in finder
+      contextFiles: relevantContexts.map((c) => c.path)
     };
   } catch (err: any) {
     console.error("Gemini API Error:", err);

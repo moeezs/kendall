@@ -38,6 +38,7 @@ function App() {
 
   // Tab UI
   const [activeTab, setActiveTab] = useState("Home");
+  const [activeChatId, setActiveChatId] = useState<string | null>(null);
 
   const navItems = [
       { name: 'Home', url: '#', icon: Home },
@@ -249,9 +250,9 @@ function App() {
       
       <div className="pt-20 px-8 flex-1 flex gap-10 overflow-hidden">
         {activeTab === "Home" && <HomeSection logs={logs} setLogs={setLogs} activeFolders={activeFolders} setActiveFolders={setActiveFolders} />}
-        {activeTab === "Chat" && <ChatSection />}
+        {activeTab === "Chat" && <ChatSection activeChatId={activeChatId} setActiveChatId={setActiveChatId} />}
         {activeTab === "Work" && <WorkSection />}
-        {activeTab === "DB" && <DbSection />}
+        {activeTab === "DB" && <DbSection onOpenChat={(id) => { setActiveChatId(id); setActiveTab("Chat"); }} />}
       </div>
     </div>
   );

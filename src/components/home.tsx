@@ -69,13 +69,8 @@ export function HomeSection({ activeFolders, setActiveFolders, logs, setLogs }: 
 
   return (
     <main className="w-full flex-1 overflow-y-auto pb-12">
-      {/* Header Section */}
-      <header className="mb-12">
-        <h1 className="text-4xl font-bold tracking-tighter text-[#e7e5e5] mb-2">Home</h1>
-      </header>
-
       {/* Bento Grid of Directories */}
-      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-6 pt-4">
         {/* Specialized Folder: Dump */}
         <div className="group relative col-span-1 md:col-span-2 row-span-2 bg-[#202022] rounded-xl p-8 hover:bg-[#28282a] transition-colors border border-transparent hover:border-[#474848]/10 overflow-hidden">
           <div className="flex justify-between items-start mb-16">
