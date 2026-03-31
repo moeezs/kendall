@@ -50,3 +50,9 @@ export async function getFileRecord(path: string) {
   return results.length > 0 ? results[0] : null;
 }
 
+
+export async function getAllFiles() {
+  const db = await getDb();
+  return await db.select<any[]>("SELECT * FROM files WHERE embedding IS NOT NULL");
+}
+
