@@ -5,6 +5,15 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "opener:default"
+    "opener:default",
+    "fs:default",
+    {
+      "identifier": "fs:allow-watch",
+      "allow": [{ "path": "$DESKTOP/**" }]
+    },
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [{ "path": "$DESKTOP/**" }]
+    }
   ]
 }
