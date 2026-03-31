@@ -61,7 +61,6 @@ export async function askKendallOS(query: string) {
   const allFiles = await getAllFiles();
   const totalFiles = allFiles.length;
   
-  // If no files were found/indexed at all
   if (contexts.length === 0 || contexts[0].score < 0) {
     return {
       answer: "I don't have any documents indexed to answer that question yet. Try moving some files into the Dump folder!",
@@ -69,7 +68,7 @@ export async function askKendallOS(query: string) {
     };
   }
 
-  // Format context snippets (Limiting size to avoid overloading prompt)
+  // Format context snippets
   const contextText = contexts.map((c) => `[Source: ${c.filename}]\n${(c.content || '').substring(0, 1500)}...`).join("\n\n");
 
   const prompt = `You are Kendall OS, a helpful, conversational, and concise personal AI assistant. 
@@ -120,12 +119,62 @@ export async function categorizeFile(fileText: string, availableFolders: string[
     `;
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" }); 
     const result = await model.generateContent(prompt);
     return result.response.text().trim();
     
   } catch (error) {
     console.error("Sorting error:", error);
     return "Random";
+  }
+}
+
+// Batch Auto-Sort (Handles 15+ files in 1 API Call)
+export async function categorizeBatch(files: { fileName: string, text: string }[], availableFolders: string[]): Promise<Record<string, string>> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) {
+    return files.reduce((acc, f) => ({ ...acc, [f.fileName]: "Misc" }), {});
+  }
+  
+  if (files.length === 0) return {};
+
+  try {
+    const filePreviews = files.map(f => ({
+      fileName: f.fileName,
+      textPreview: f.text.substring(0, 1000)
+    }));
+
+    const prompt = `
+      You are an automated file sorter processing a batch of files.
+      Determine which folder each file belongs in based on its text preview.
+      
+      Available Folders: ${availableFolders.join(", ")}
+      
+      If a file doesn't clearly fit into any folder, map it to: Misc
+      
+      Respond STRICTLY with a raw JSON object mapping the exact fileName to the target folder string. 
+      Do NOT include markdown formatting like \`\`\`json. Just the raw JSON object.
+      Example: {"annual_report.pdf": "Work", "grocery_receipt.jpg": "Misc"}
+
+      Files to categorize:
+      ${JSON.stringify(filePreviews, null, 2)}
+    `;
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+    const result = await model.generateContent(prompt);
+    let responseText = result.response.text().trim();
+    
+    // Clean up potential markdown formatting if the model slipped up
+    if (responseText.startsWith("\`\`\`json")) {
+      responseText = responseText.replace(/^\`\`\`json/, "").replace(/\`\`\`$/, "").trim();
+    } else if (responseText.startsWith("\`\`\`")) {
+      responseText = responseText.replace(/^\`\`\`/, "").replace(/\`\`\`$/, "").trim();
+    }
+
+    return JSON.parse(responseText);
+  } catch (error) {
+    console.error("Batch sorting error:", error);
+    return files.reduce((acc, f) => ({ ...acc, [f.fileName]: "Misc" }), {});
   }
 }

@@ -30,6 +30,13 @@
       "allow": [{ "path": "$DESKTOP/kendall/**" }]
     },
     {
+      "identifier": "fs:allow-mkdir",
+      "allow": [
+        { "path": "$DESKTOP/kendall/**" },
+        { "path": "$DESKTOP/kendall" }
+      ]
+    },
+    {
       "identifier": "fs:allow-read-dir",
       "allow": [
         { "path": "$DESKTOP/kendall" },

@@ -5,29 +5,19 @@ import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
 import { saveFileRecord } from "./services/database";
-import { askKendallOS, categorizeFile } from "./services/rag";
+import { askKendallOS, categorizeBatch } from "./services/rag";
 import { NavBar } from "@/components/ui/navbar";
 import { Home, MessageCircle, Briefcase } from "lucide-react";
 
 function App() {
   const recentFilesRef = useRef<Map<string, number>>(new Map());
+  
+  // Batch processing state
+  const pendingBatchRef = useRef<Array<{ filePath: string; fileName: string; text: string }>>([]);
+  const batchTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Directory UI states
   const [activeFolders, setActiveFolders] = useState<string[]>([]);
-  const [basePath, setBasePath] = useState("");
-
-  const fetchFolders = async (kendallPath: string) => {
-    try {
-      const entries = await readDir(kendallPath); 
-      const foldersOnly = entries
-        .filter(entry => entry.isDirectory && entry.name !== "Dump" && !entry.name.startsWith("."))
-        .map(entry => entry.name);
-        
-      setActiveFolders(foldersOnly);
-    } catch (error) {
-      console.error("Failed to read directories:", error);
-    }
-  };
 
   // Chat UI states
   const [query, setQuery] = useState("");
@@ -74,8 +64,6 @@ function App() {
       const desktop = await desktopDir();
       const kendallPath = await join(desktop, "kendall");
       const dumpPath = await join(kendallPath, "Dump");
-      
-      setBasePath(kendallPath);
       
       // Fetch dynamic folders on startup
       try {
@@ -147,39 +135,64 @@ function App() {
           console.log("extracting text");
           const text = await extractTextFromFile(filePath);
 
-          // Ask Gemini where it goes
-          const targetFolderName = await categorizeFile(text, currentFolders);
-          console.log(`🤖 Gemini says this belongs in: ${targetFolderName}`);
-
-          // Move the physical file on the Mac
-          let finalFilePath = filePath;
-          if (targetFolderName && targetFolderName !== "Dump") {
-            const folderPath = await join(kendallPath, targetFolderName);
-            
-            // Auto-create folder if Gemini hallucinated a new one or if 'Misc' doesn't exist
-            const folderExists = await exists(folderPath);
-            if (!folderExists) {
-              await mkdir(folderPath);
-              setActiveFolders(prev => [...prev, targetFolderName]);
-              currentFolders.push(targetFolderName);
-            }
-
-            const newFilePath = await join(folderPath, fileName);
-            await rename(filePath, newFilePath);
-            finalFilePath = newFilePath;
-            console.log(`Moved file to ${newFilePath}`);
+          console.log(`Queued ${fileName} for batch classification`);
+          pendingBatchRef.current.push({ filePath, fileName, text });
+          
+          if (batchTimerRef.current) {
+            clearTimeout(batchTimerRef.current);
           }
 
-          console.log("vectorizing text");
-          // Vectorize
-          const vector = await generateEmbedding(text);
-          
-          console.log("✅ Processed:", finalFilePath.split('/').pop());
-          
-          // Save to DB
-          console.log("saving to db...");
-          await saveFileRecord(finalFilePath, fileName, text, Array.from(vector));
-          console.log("✅ Saved to DB!");
+          batchTimerRef.current = setTimeout(async () => {
+            const batchToProcess = [...pendingBatchRef.current];
+            pendingBatchRef.current = []; // Clear queue
+
+            if (batchToProcess.length === 0) return;
+            console.log(`Processing batch of ${batchToProcess.length} files...`);
+
+            try {
+              // Ask Gemini for batch classification
+              const fileContexts = batchToProcess.map(f => ({ fileName: f.fileName, text: f.text }));
+              const folderMapping = await categorizeBatch(fileContexts, currentFolders);
+              
+              for (const file of batchToProcess) {
+                const targetFolderName = folderMapping[file.fileName] || "Misc";
+                console.log(`🤖 Gemini says ${file.fileName} belongs in: ${targetFolderName}`);
+                
+                let finalFilePath = file.filePath;
+                if (targetFolderName && targetFolderName !== "Dump") {
+                  const folderPath = await join(kendallPath, targetFolderName);
+                  
+                  // Auto-create folder tracking
+                  const folderExists = await exists(folderPath);
+                  if (!folderExists) {
+                    await mkdir(folderPath);
+                    setActiveFolders(prev => {
+                      if (!prev.includes(targetFolderName)) return [...prev, targetFolderName];
+                      return prev;
+                    });
+                    if (!currentFolders.includes(targetFolderName)) {
+                      currentFolders.push(targetFolderName);
+                    }
+                  }
+
+                  const newFilePath = await join(folderPath, file.fileName);
+                  await rename(file.filePath, newFilePath);
+                  finalFilePath = newFilePath;
+                  console.log(`Moved ${file.fileName} to ${newFilePath}`);
+                }
+
+                console.log(`vectorizing text for ${file.fileName}`);
+                const vector = await generateEmbedding(file.text);
+                
+                console.log(`saving ${file.fileName} to db...`);
+                await saveFileRecord(finalFilePath, file.fileName, file.text, Array.from(vector));
+                console.log(`✅ Saved ${file.fileName} to DB!`);
+              }
+            } catch (err) {
+              console.error("Batch processing error:", err);
+            }
+          }, 3000);
+
         } catch (err) {
           const message = String(err);
 

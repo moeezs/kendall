@@ -62,24 +62,29 @@ export const extractTextFromFile = async (filePath: string): Promise<string> => 
     }
 
     case 'pdf': {
-      const pdfBytes = await readFileWithRetry(filePath);
-      const loadingTask = pdfjsLib.getDocument({ 
-        data: new Uint8Array(pdfBytes),
-        isEvalSupported: false
-      });
-      const pdf = await loadingTask.promise;
-      
-      let fullText = "";
-      for (let i = 1; i <= pdf.numPages; i++) {
-        const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent({
-          includeMarkedContent: false,
-          disableNormalization: false
+      try {
+        const pdfBytes = await readFileWithRetry(filePath);
+        const loadingTask = pdfjsLib.getDocument({ 
+          data: new Uint8Array(pdfBytes),
+          isEvalSupported: false
         });
-        const pageText = textContent.items.map((item: any) => item.str).join(" ");
-        fullText += pageText + "\n";
+        const pdf = await loadingTask.promise;
+        
+        let fullText = "";
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const textContent = await page.getTextContent({
+            includeMarkedContent: false,
+            disableNormalization: false
+          });
+          const pageText = textContent.items.map((item: any) => item.str).join(" ");
+          fullText += pageText + "\n";
+        }
+        return fullText;
+      } catch (err) {
+        console.error("PDF Parsing Error:", err);
+        return "";
       }
-      return fullText;
     }
 
     case 'png':
@@ -97,6 +102,7 @@ export const extractTextFromFile = async (filePath: string): Promise<string> => 
     }
 
     default:
-      throw new Error(`Unsupported file type: ${extension}`);
+      console.warn(`Unsupported file type: ${extension}. Resolving to empty string.`);
+      return "";
   }
 };
