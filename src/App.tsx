@@ -4,11 +4,14 @@ import { watch, exists, readDir, rename, mkdir } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
-import { saveFileRecord, getAllFilesMetadata, deleteFileRecord } from "./services/database";
-import { askKendallOS, categorizeBatch } from "./services/rag";
+import { saveFileRecord } from "./services/database";
+import { categorizeBatch } from "./services/rag";
 import { NavBar } from "@/components/ui/navbar";
 import { Home, MessageCircle, Briefcase, Database } from "lucide-react";
-import { revealItemInDir } from "@tauri-apps/plugin-opener";
+import { HomeSection } from "@/components/home";
+import { ChatSection } from "@/components/chat";
+import { WorkSection } from "@/components/work";
+import { DbSection } from "@/components/db";
 
 function App() {
   const recentFilesRef = useRef<Map<string, number>>(new Map());
@@ -20,14 +23,8 @@ function App() {
   // Directory UI states
   const [activeFolders, setActiveFolders] = useState<string[]>([]);
 
-  // Chat UI states
-  const [query, setQuery] = useState("");
-  const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string; sources?: string[] }[]>([]);
-  const [isTyping, setIsTyping] = useState(false);
-
   // Tab UI
   const [activeTab, setActiveTab] = useState("Home");
-  const [dbFiles, setDbFiles] = useState<any[]>([]);
 
   const navItems = [
       { name: 'Home', url: '#', icon: Home },
@@ -35,43 +32,6 @@ function App() {
       { name: 'Work', url: '#', icon: Briefcase },
       { name: 'DB', url: '#', icon: Database },
   ];
-
-  useEffect(() => {
-    if (activeTab === "DB") {
-      refreshDbFiles();
-    }
-  }, [activeTab]);
-
-  const refreshDbFiles = async () => {
-    try {
-      const files = await getAllFilesMetadata();
-      setDbFiles(files);
-    } catch (err) {
-      console.error("Failed to load DB files:", err);
-    }
-  };
-
-  const handleAsk = async () => {
-    if (!query.trim()) return;
-
-    const unsubmittedQuery = query;
-    setMessages(prev => [...prev, { role: "user", content: unsubmittedQuery }]);
-    setQuery("");
-    setIsTyping(true);
-
-    try {
-      const response = await askKendallOS(unsubmittedQuery);
-      setMessages(prev => [...prev, { 
-        role: "ai", 
-        content: response.answer,
-        sources: response.contextFiles
-      }]);
-    } catch (err: any) {
-      setMessages(prev => [...prev, { role: "ai", content: `❌ Error: ${err.message}` }]);
-    } finally {
-      setIsTyping(false);
-    }
-  };
 
   useEffect(() => {
     let unwatchFn: () => void;
@@ -250,143 +210,11 @@ function App() {
     <div className="p-5 font-sans flex flex-col h-screen">
       <NavBar items={navItems} activeTab={activeTab} setActiveTab={setActiveTab} />
       
-      <div className="mt-15 flex-1 flex gap-10">
-        {activeTab === "Home" && (
-          <div className="flex-1 p-5">
-            <h2 className="text-2xl font-bold">Kendall</h2>
-            <p className="text-gray-500">Your local, private agent.</p>
-            
-            <div className="mt-8">
-              <h3 className="text-lg font-semibold">Active Directories</h3>
-              <div className="flex flex-col gap-4 mt-3">
-                <div className="flex gap-3 flex-wrap">
-                  <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg">
-                    📥 Dump (Auto-Sort)
-                  </div>
-                  {activeFolders.map((folderName) => (
-                    <div key={folderName} className="p-4 border border-gray-300 rounded-lg">
-                      📁 {folderName}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "Chat" && (
-          <div className="flex-1 bg-gray-50 rounded-xl p-5 flex flex-col border border-gray-200 h-full">
-            <div className="flex-1 overflow-y-auto flex flex-col gap-4 mb-5">
-              {messages.length === 0 && (
-                <p className="text-gray-500 text-center my-auto">
-                  Ask Kendall a question about your files...
-                </p>
-              )}
-          {messages.map((msg, i) => (
-            <div key={i} className={`max-w-[85%] ${msg.role === "user" ? "self-end" : "self-start"}`}>
-              <div className={`px-4 py-3 rounded-xl ${
-                msg.role === "user" 
-                  ? "bg-blue-600 text-white rounded-br-sm" 
-                  : "bg-gray-200 text-black rounded-bl-sm"
-              }`}>
-                {msg.content}
-              </div>
-              {msg.sources && msg.sources.length > 0 && (
-                <div className="text-[11px] text-gray-500 mt-1 pl-1">
-                  Sources: {msg.sources.join(", ")}
-                </div>
-              )}
-            </div>
-          ))}
-          {isTyping && (
-            <div className="self-start text-gray-500 text-[13px]">
-              Kendall is thinking...
-            </div>
-          )}
-        </div>
-
-            <div className="flex gap-2.5 mt-auto">
-              <input 
-                type="text" 
-                placeholder="Ask Kendall..."
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-                className="flex-1 p-3 rounded-lg border border-gray-300 text-[15px] text-black bg-white outline-none focus:border-blue-500"
-              />
-              <button 
-                onClick={handleAsk}
-                disabled={isTyping}
-                className="px-5 rounded-lg border-none bg-blue-600 text-white cursor-pointer hover:bg-blue-700 disabled:opacity-50"
-              >
-                Ask
-              </button>
-            </div>
-          </div>
-        )}
-
-        {activeTab === "Work" && (
-          <div className="flex-1 flex items-center justify-center">
-            <p className="text-gray-500 text-lg">Work space coming soon...</p>
-          </div>
-        )}
-
-        {activeTab === "DB" && (
-          <div className="flex-1 p-5 overflow-y-auto">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-xl font-bold">Database Index</h2>
-              <button 
-                onClick={refreshDbFiles}
-                className="px-3 py-1 bg-gray-200 hover:bg-gray-300 rounded text-sm cursor-pointer"
-              >
-                Refresh
-              </button>
-            </div>
-            
-            {dbFiles.length === 0 ? (
-              <p className="text-gray-500 text-center">No files indexed yet.</p>
-            ) : (
-              <div className="flex flex-col gap-3">
-                {dbFiles.map((f, idx) => (
-                  <div key={idx} className="flex flex-col gap-2 p-4 border border-gray-200 rounded-lg bg-[#7c7c80] shadow-sm">
-                    <div className="flex justify-between items-start">
-                      <div className="font-semibold">{f.filename}</div>
-                      <div className="flex gap-2 text-xs">
-                        <button 
-                          onClick={() => revealItemInDir(f.path)}
-                          className="px-2 py-1 bg-blue-100 hover:bg-blue-200 text-blue-800 rounded cursor-pointer transition-colors"
-                        >
-                          Reveal in Finder
-                        </button>
-                        <button 
-                          onClick={async () => {
-                            try {
-                              console.log("Delete clicked for ID:", f.id);
-                              await deleteFileRecord(f.id);
-                              await refreshDbFiles();
-                            } catch (err) {
-                              console.error("Could not delete:", err);
-                              alert("Failed to delete record. Check console.");
-                            }
-                          }}
-                          className="px-2 py-1 bg-red-100 hover:bg-red-200 text-red-800 rounded cursor-pointer transition-colors"
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                    <div className="text-sm text-gray-200 truncate" title={f.path}>
-                      {f.path}
-                    </div>
-                    <div className="text-xs text-gray-100">
-                      Tokens: {(f.content_length || 0).toLocaleString()} chars
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        )}
+      <div className="mt-15 flex-1 flex gap-10 overflow-hidden">
+        {activeTab === "Home" && <HomeSection activeFolders={activeFolders} />}
+        {activeTab === "Chat" && <ChatSection />}
+        {activeTab === "Work" && <WorkSection />}
+        {activeTab === "DB" && <DbSection />}
       </div>
     </div>
   );
