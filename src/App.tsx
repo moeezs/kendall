@@ -1,15 +1,32 @@
 import "./App.css";
 import { useEffect, useRef, useState } from "react";
-import { watch, exists } from "@tauri-apps/plugin-fs";
+import { watch, exists, readDir, rename, remove, mkdir } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
 import { saveFileRecord } from "./services/database";
-import { askKendallOS } from "./services/rag";
+import { askKendallOS, categorizeFile } from "./services/rag";
 
 function App() {
   const [currentPath, setCurrentPath] = useState("Loading...");
   const recentFilesRef = useRef<Map<string, number>>(new Map());
+
+  // Directory UI states
+  const [activeFolders, setActiveFolders] = useState<string[]>([]);
+  const [basePath, setBasePath] = useState("");
+
+  const fetchFolders = async (kendallPath: string) => {
+    try {
+      const entries = await readDir(kendallPath); 
+      const foldersOnly = entries
+        .filter(entry => entry.isDirectory && entry.name !== "Dump" && !entry.name.startsWith("."))
+        .map(entry => entry.name);
+        
+      setActiveFolders(foldersOnly);
+    } catch (error) {
+      console.error("Failed to read directories:", error);
+    }
+  };
 
   // Chat UI states
   const [query, setQuery] = useState("");
@@ -41,11 +58,30 @@ function App() {
   useEffect(() => {
     let unwatchFn: () => void;
 
+    // We store this mutable copy inside the effect so watcher can access latest folders
+    let currentFolders: string[] = [];
+
     const startWatching = async () => {
       const desktop = await desktopDir();
-      const dumpPath = await join(desktop, "kendall/Dump");
+      const kendallPath = await join(desktop, "kendall");
+      const dumpPath = await join(kendallPath, "Dump");
+      
+      setBasePath(kendallPath);
       setCurrentPath(dumpPath); 
       
+      // Fetch dynamic folders on startup
+      try {
+        const entries = await readDir(kendallPath); 
+        const foldersOnly = entries
+          .filter(entry => entry.isDirectory && entry.name !== "Dump" && !entry.name.startsWith("."))
+          .map(entry => entry.name);
+          
+        setActiveFolders(foldersOnly);
+        currentFolders = foldersOnly;
+      } catch (error) {
+        console.error("Failed to read directories:", error);
+      }
+
       console.log("Starting watcher on:", dumpPath);
       
       // calls the callback whenever any changes are detected
@@ -99,20 +135,42 @@ function App() {
         console.log("✅ NEW FILE: ", fileName);
 
         try {
-          // Extract
+          // Extract Text
           console.log("extracting text");
           const text = await extractTextFromFile(filePath);
+
+          // Ask Gemini where it goes
+          const targetFolderName = await categorizeFile(text, currentFolders);
+          console.log(`🤖 Gemini says this belongs in: ${targetFolderName}`);
+
+          // Move the physical file on the Mac
+          let finalFilePath = filePath;
+          if (targetFolderName && targetFolderName !== "Dump") {
+            const folderPath = await join(kendallPath, targetFolderName);
+            
+            // Auto-create folder if Gemini hallucinated a new one or if 'Misc' doesn't exist
+            const folderExists = await exists(folderPath);
+            if (!folderExists) {
+              await mkdir(folderPath);
+              setActiveFolders(prev => [...prev, targetFolderName]);
+              currentFolders.push(targetFolderName);
+            }
+
+            const newFilePath = await join(folderPath, fileName);
+            await rename(filePath, newFilePath);
+            finalFilePath = newFilePath;
+            console.log(`Moved file to ${newFilePath}`);
+          }
 
           console.log("vectorizing text");
           // Vectorize
           const vector = await generateEmbedding(text);
           
-          console.log("✅ Processed:", filePath.split('/').pop());
-          console.log("Vector preview:", vector.slice(0, 5));
+          console.log("✅ Processed:", finalFilePath.split('/').pop());
           
-          // DB
+          // Save to DB
           console.log("saving to db...");
-          await saveFileRecord(filePath, fileName, text, Array.from(vector));
+          await saveFileRecord(finalFilePath, fileName, text, Array.from(vector));
           console.log("✅ Saved to DB!");
         } catch (err) {
           const message = String(err);
@@ -158,21 +216,16 @@ function App() {
           <h3>Active Directories</h3>
           <div style={{ display: "flex", flexDirection: "column", gap: "15px", marginTop: "10px" }}>
             <p>Current Path: <br/><code>{currentPath}</code></p>
-            <div style={{ display: "flex", gap: "10px" }}>
+            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
               <div style={{ padding: "15px", border: "2px dashed #ccc", borderRadius: "8px" }}>
                 📥 Dump (Auto-Sort)
               </div>
-              <div style={{ padding: "15px", border: "1px solid #ccc", borderRadius: "8px" }}>
-                📚 McMaster
-              </div>
-            </div>
-            <div style={{ display: "flex", gap: "10px" }}>
-              <div style={{ padding: "15px", border: "1px solid #ccc", borderRadius: "8px" }}>
-                📌 Projects
-              </div>
-              <div style={{ padding: "15px", border: "1px solid #ccc", borderRadius: "8px" }}>
-                🫡 Random
-              </div>
+              {/* DYNAMIC FOLDERS RENDER HERE */}
+              {activeFolders.map((folderName) => (
+                <div key={folderName} style={{ padding: "15px", border: "1px solid #ccc", borderRadius: "8px" }}>
+                  📁 {folderName}
+                </div>
+              ))}
             </div>
           </div>
         </div>

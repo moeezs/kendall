@@ -101,3 +101,31 @@ User: "${query}"`;
     throw new Error(err.message || "Failed to contact Gemini API");
   }
 }
+
+export async function categorizeFile(fileText: string, availableFolders: string[]) {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) return "Misc";
+  try {
+    const prompt = `
+      You are an automated file sorter.
+      Look at the following text extracted from a file, and determine which folder it belongs in.
+      
+      Available Folders: ${availableFolders.join(", ")}
+      
+      Reply with ONLY the exact name of the folder it belongs to. Do not add punctuation, explanations, or quotes.
+      If it does not clearly fit into any of the available folders, reply with exactly: Misc
+      
+      File Text (Preview):
+      ${fileText.substring(0, 1500)}
+    `;
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+    const result = await model.generateContent(prompt);
+    return result.response.text().trim();
+    
+  } catch (error) {
+    console.error("Sorting error:", error);
+    return "Random";
+  }
+}
