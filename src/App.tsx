@@ -1,14 +1,15 @@
 import "./App.css";
 import { useEffect, useRef, useState } from "react";
-import { watch, exists, readDir, rename, remove, mkdir } from "@tauri-apps/plugin-fs";
+import { watch, exists, readDir, rename, mkdir } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
 import { saveFileRecord } from "./services/database";
 import { askKendallOS, categorizeFile } from "./services/rag";
+import { NavBar } from "@/components/ui/navbar";
+import { Home, MessageCircle, Briefcase } from "lucide-react";
 
 function App() {
-  const [currentPath, setCurrentPath] = useState("Loading...");
   const recentFilesRef = useRef<Map<string, number>>(new Map());
 
   // Directory UI states
@@ -32,6 +33,14 @@ function App() {
   const [query, setQuery] = useState("");
   const [messages, setMessages] = useState<{ role: "user" | "ai"; content: string; sources?: string[] }[]>([]);
   const [isTyping, setIsTyping] = useState(false);
+
+  // Tab UI
+  const [activeTab, setActiveTab] = useState("Home");
+  const navItems = [
+      { name: 'Home', url: '#', icon: Home },
+      { name: 'Chat', url: '#', icon: MessageCircle },
+      { name: 'Work', url: '#', icon: Briefcase },
+  ];
 
   const handleAsk = async () => {
     if (!query.trim()) return;
@@ -67,7 +76,6 @@ function App() {
       const dumpPath = await join(kendallPath, "Dump");
       
       setBasePath(kendallPath);
-      setCurrentPath(dumpPath); 
       
       // Fetch dynamic folders on startup
       try {
@@ -207,80 +215,89 @@ function App() {
 
 
   return (
-    <div style={{ padding: "20px", fontFamily: "system-ui, sans-serif", display: "flex", gap: "40px" }}>
-      <div style={{ flex: 1 }}>
-        <h2>Kendall</h2>
-        <p style={{ color: "gray" }}>Your local, private agent.</p>
-        
-        <div style={{ marginTop: "30px" }}>
-          <h3>Active Directories</h3>
-          <div style={{ display: "flex", flexDirection: "column", gap: "15px", marginTop: "10px" }}>
-            <p>Current Path: <br/><code>{currentPath}</code></p>
-            <div style={{ display: "flex", gap: "10px", flexWrap: "wrap" }}>
-              <div style={{ padding: "15px", border: "2px dashed #ccc", borderRadius: "8px" }}>
-                📥 Dump (Auto-Sort)
-              </div>
-              {/* DYNAMIC FOLDERS RENDER HERE */}
-              {activeFolders.map((folderName) => (
-                <div key={folderName} style={{ padding: "15px", border: "1px solid #ccc", borderRadius: "8px" }}>
-                  📁 {folderName}
+    <div className="p-5 font-sans flex flex-col h-screen">
+      <NavBar items={navItems} activeTab={activeTab} setActiveTab={setActiveTab} />
+      
+      <div className="mt-15 flex-1 flex gap-10">
+        {activeTab === "Home" && (
+          <div className="flex-1 p-5">
+            <h2 className="text-2xl font-bold">Kendall</h2>
+            <p className="text-gray-500">Your local, private agent.</p>
+            
+            <div className="mt-8">
+              <h3 className="text-lg font-semibold">Active Directories</h3>
+              <div className="flex flex-col gap-4 mt-3">
+                <div className="flex gap-3 flex-wrap">
+                  <div className="p-4 border-2 border-dashed border-gray-300 rounded-lg">
+                    📥 Dump (Auto-Sort)
+                  </div>
+                  {activeFolders.map((folderName) => (
+                    <div key={folderName} className="p-4 border border-gray-300 rounded-lg">
+                      📁 {folderName}
+                    </div>
+                  ))}
                 </div>
-              ))}
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        )}
 
-      <div style={{ flex: 1, backgroundColor: "#f9fafb", borderRadius: "12px", padding: "20px", display: "flex", flexDirection: "column", border: "1px solid #e5e7eb", minHeight: "80vh" }}>
-        <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: "15px", marginBottom: "20px", maxHeight: "60vh" }}>
-          {messages.length === 0 && (
-            <p style={{ color: "gray", textAlign: "center", marginTop: "auto", marginBottom: "auto" }}>
-              Ask Kendall a question about your files...
-            </p>
-          )}
+        {activeTab === "Chat" && (
+          <div className="flex-1 bg-gray-50 rounded-xl p-5 flex flex-col border border-gray-200 h-full">
+            <div className="flex-1 overflow-y-auto flex flex-col gap-4 mb-5">
+              {messages.length === 0 && (
+                <p className="text-gray-500 text-center my-auto">
+                  Ask Kendall a question about your files...
+                </p>
+              )}
           {messages.map((msg, i) => (
-            <div key={i} style={{ alignSelf: msg.role === "user" ? "flex-end" : "flex-start", maxWidth: "85%" }}>
-              <div style={{ 
-                backgroundColor: msg.role === "user" ? "#007AFF" : "#e5e7eb", 
-                color: msg.role === "user" ? "white" : "black",
-                padding: "12px 16px", 
-                borderRadius: "12px",
-                borderBottomRightRadius: msg.role === "user" ? "2px" : "12px",
-                borderBottomLeftRadius: msg.role === "ai" ? "2px" : "12px"
-              }}>
+            <div key={i} className={`max-w-[85%] ${msg.role === "user" ? "self-end" : "self-start"}`}>
+              <div className={`px-4 py-3 rounded-xl ${
+                msg.role === "user" 
+                  ? "bg-blue-600 text-white rounded-br-sm" 
+                  : "bg-gray-200 text-black rounded-bl-sm"
+              }`}>
                 {msg.content}
               </div>
               {msg.sources && msg.sources.length > 0 && (
-                <div style={{ fontSize: "11px", color: "gray", marginTop: "4px", paddingLeft: "4px" }}>
+                <div className="text-[11px] text-gray-500 mt-1 pl-1">
                   Sources: {msg.sources.join(", ")}
                 </div>
               )}
             </div>
           ))}
           {isTyping && (
-            <div style={{ alignSelf: "flex-start", color: "gray", fontSize: "13px" }}>
+            <div className="self-start text-gray-500 text-[13px]">
               Kendall is thinking...
             </div>
           )}
         </div>
 
-        <div style={{ display: "flex", gap: "10px", marginTop: "auto" }}>
-          <input 
-            type="text" 
-            placeholder="Ask Kendall..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Enter" && handleAsk()}
-            style={{ flex: 1, padding: "12px", borderRadius: "8px", border: "1px solid #ccc", fontSize: "15px" }}
-          />
-          <button 
-            onClick={handleAsk}
-            disabled={isTyping}
-            style={{ padding: "0 20px", borderRadius: "8px", border: "none", backgroundColor: "#007AFF", color: "white", cursor: "pointer" }}
-          >
-            Ask
-          </button>
-        </div>
+            <div className="flex gap-2.5 mt-auto">
+              <input 
+                type="text" 
+                placeholder="Ask Kendall..."
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleAsk()}
+                className="flex-1 p-3 rounded-lg border border-gray-300 text-[15px] text-black bg-white outline-none focus:border-blue-500"
+              />
+              <button 
+                onClick={handleAsk}
+                disabled={isTyping}
+                className="px-5 rounded-lg border-none bg-blue-600 text-white cursor-pointer hover:bg-blue-700 disabled:opacity-50"
+              >
+                Ask
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === "Work" && (
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-gray-500 text-lg">Work space coming soon...</p>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -3,7 +3,7 @@ import { readFile } from "@tauri-apps/plugin-fs";
 import mammoth from "mammoth";
 import Tesseract from "tesseract.js";
 import * as pdfjsLib from "pdfjs-dist";
-import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.js?url";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
 
