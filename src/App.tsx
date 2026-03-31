@@ -4,6 +4,7 @@ import { watch, exists } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
+import { saveFileRecord } from "./services/database";
 
 function App() {
   const [currentPath, setCurrentPath] = useState("Loading...");
@@ -82,6 +83,9 @@ function App() {
           console.log("Vector preview:", vector.slice(0, 5));
           
           // DB
+          console.log("saving to db...");
+          await saveFileRecord(filePath, fileName, text, Array.from(vector));
+          console.log("✅ Saved to DB!");
         } catch (err) {
           const message = String(err);
 
