@@ -25,6 +25,15 @@ for (const key of [
 
 // telegram user id
 const ALLOWED_USER_ID = parseInt(process.env.TELEGRAM_ALLOWED_USER_ID, 10);
+if (!Number.isFinite(ALLOWED_USER_ID)) {
+  console.error(
+    "❌ Invalid TELEGRAM_ALLOWED_USER_ID: expected a numeric Telegram user ID.",
+  );
+  console.error(
+    "   Check server/.env and ensure TELEGRAM_ALLOWED_USER_ID is set to your numeric Telegram user ID.",
+  );
+  process.exit(1);
+}
 
 function resolveDbPath() {
   if (process.env.DB_PATH) return process.env.DB_PATH;
