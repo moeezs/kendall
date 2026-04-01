@@ -1,0 +1,18 @@
+{
+  "name": "kendall-telegram-server",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Telegram chatbot server for Kendall OS",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "@huggingface/transformers": "^4.0.0",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
+  }
+}
