@@ -47,6 +47,6 @@ Search for your bot's username in Telegram and send it a message. Send `/reset` 
 
 ## Notes
 
-- Conversation history is kept **per chat ID** in memory (resets when server restarts).
+- Conversation history is stored **per chat ID** in SQLite and persists across restarts (until you send `/reset`).
 - The bot gives short, mobile-friendly responses (no markdown).
-- Uses Gemini `startChat` with full conversation history for context.
+- Uses Gemini `startChat` with a sliding window of the last 20 turns for context (not the full history).
