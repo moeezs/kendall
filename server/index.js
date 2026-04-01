@@ -28,7 +28,7 @@ const ALLOWED_USER_ID = parseInt(process.env.TELEGRAM_ALLOWED_USER_ID, 10);
 
 function resolveDbPath() {
   if (process.env.DB_PATH) return process.env.DB_PATH;
-  const appId = process.env.KENDALL_APP_ID || "com.moeez.kendall";
+  const appId = process.env.KENDALL_APP_ID;
   const home = os.homedir();
   switch (process.platform) {
     case "win32":
