@@ -109,21 +109,44 @@ function cosineSimilarity(a, b) {
 // rag search
 async function searchContext(query, topK = 3) {
   const queryVec = await generateEmbedding(query);
-  const files = db
-    .prepare("SELECT * FROM files WHERE embedding IS NOT NULL")
+
+  // First, fetch only the minimal data needed for scoring (id + embedding)
+  const fileEmbeddings = db
+    .prepare("SELECT id, embedding FROM files WHERE embedding IS NOT NULL")
     .all();
 
-  return files
+  const scored = fileEmbeddings
     .map((f) => {
       let emb = [];
       try {
         emb = JSON.parse(f.embedding);
       } catch {}
-      return { ...f, score: cosineSimilarity(queryVec, emb) };
+      return { id: f.id, score: cosineSimilarity(queryVec, emb) };
     })
     .filter((f) => f.score > 0.25)
     .sort((a, b) => b.score - a.score)
     .slice(0, topK);
+
+  if (scored.length === 0) {
+    return [];
+  }
+
+  // Fetch full rows only for the top-K matching ids
+  const ids = scored.map((f) => f.id);
+  const placeholders = ids.map(() => "?").join(", ");
+  const fullRows = db
+    .prepare(`SELECT * FROM files WHERE id IN (${placeholders})`)
+    .all(...ids);
+
+  // Index full rows by id for quick lookup
+  const rowsById = new Map(fullRows.map((row) => [row.id, row]));
+
+  // Return full rows in score order, augmented with their score
+  return scored
+    .map((s) => {
+      const row = rowsById.get(s.id) || {};
+      return { ...row, score: s.score };
+    });
 }
 
 // db helpers
