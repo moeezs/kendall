@@ -23,11 +23,13 @@ cp .env.example .env
 
 Fill in `server/.env`:
 
-| Variable             | Where to get it                |
-| -------------------- | ------------------------------ |
-| `GEMINI_API_KEY`     | Same key from your main `.env` |
-| `TELEGRAM_BOT_TOKEN` | From @BotFather in step 1      |
-
+| Variable                 | Where to get it / What it does                                                  |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `GEMINI_API_KEY`         | Same key from your main `.env`                                                  |
+| `TELEGRAM_BOT_TOKEN`     | From @BotFather in step 1                                                        |
+| `TELEGRAM_ALLOWED_USER_ID` | Your personal Telegram numeric user ID; only this user can talk to the bot (required) |
+| `KENDALL_APP_ID`         | (Optional) App ID used to select which Kendall DB to use                         |
+| `DB_PATH`                | (Optional) Full path to the Kendall DB file; overrides the default/app-based path |
 ### 4. Start the bot
 
 ```bash
