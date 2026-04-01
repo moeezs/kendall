@@ -56,52 +56,81 @@ export async function askKendallOS(query: string, chatHistory: {role: string, co
   const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
   if (!apiKey) throw new Error("Missing Gemini API Key. Please add it to your .env file.");
 
-  console.log("Searching local database for context...");
+  console.log("[rag] Searching local database for context...");
   const contexts = await searchContext(query, 3);
-  
-  // Filter out low scores so we don't include irrelevant sources
   const relevantContexts = contexts.filter(c => c.score > 0.25);
-  
+  console.log("[rag] Results:", contexts.map(c => `${c.filename} (${c.score.toFixed(3)})`));
+
   const allFiles = await getAllFiles();
-  const totalFiles = allFiles.length;
-  
-  // Format context snippets
-  const contextText = relevantContexts.length > 0
-    ? relevantContexts.map((c) => `[Source: ${c.filename}]\n${(c.content || '').substring(0, 1500)}...`).join("\n\n")
-    : "No relevant documents found in index.";
 
-  let historyText = "";
-  if (chatHistory.length > 0) {
-    historyText = "Previous Conversation History:\n" + chatHistory.map(msg => `${msg.role === 'user' ? 'User' : 'Kendall'}: ${msg.content}`).join("\n") + "\n\n";
-  }
-
-  const prompt = `You are Kendall OS, a helpful, conversational, and concise personal AI assistant. 
-You are currently indexing and have access to ${totalFiles} local files from the user's system.
-
-Guidelines:
-- Act like a natural personal assistant. Keep responses brief, friendly, and conversational. Do not write long essays.
-- If the user asks general questions about you or your system, answer naturally using the information provided above, or mention the past conversation in the context.
-- When the user asks about their data, use the provided "Context" to answer. 
-- Very Important: If the provided Context documents are NOT relevant to the user's query, do not hallucinate an answer based on them. Just answer naturally or say you couldn't find it in their files.
-
-${historyText}Context from User's Files:
-${contextText}
-
-User: "${query}"`;
+  // Build RAG context block — only injected when relevant files exist
+  const contextBlock = relevantContexts.length > 0
+    ? relevantContexts
+        .map(c => `[Source: ${c.filename}]\n${(c.content || '').substring(0, 1500)}`)
+        .join("\n\n---\n\n")
+    : null;
 
   const genAI = new GoogleGenerativeAI(apiKey);
-  const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
 
-  console.log("Sending structured prompt to Gemini API...");
+  // System instruction is passed separately — NOT as part of the conversation history.
+  // This is the correct Gemini API pattern for setting a persistent persona.
+  const model = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    systemInstruction: `You are Kendall OS, a concise and friendly personal AI assistant with access to ${allFiles.length} indexed local files from the user's system.
+
+Rules:
+- Be brief and conversational. Avoid long essays or bullet-point dumps.
+- When asked about the user's data, use the file context provided in the message to answer accurately.
+- If the provided context is NOT relevant to the question, do NOT cite it. Just answer naturally or say you couldn't find it.
+- ONLY reference files you actually used to form your answer.
+- Always end your response with exactly this line (no exceptions): USED_SOURCES: <comma-separated filenames you cited> or USED_SOURCES: NONE`,
+  });
+
+  // Build proper Gemini history. Gemini expects alternating user/model turns.
+  // Map "ai" role → "model" as Gemini requires, and only include complete pairs.
+  const formattedHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+  const historySlice = chatHistory.slice(-10); // last 10 messages for context window efficiency
+
+  for (const msg of historySlice) {
+    formattedHistory.push({
+      role: msg.role === "user" ? "user" : "model",
+      parts: [{ text: msg.content }],
+    });
+  }
+
+  // Start a proper multi-turn chat session with history
+  const chat = model.startChat({ history: formattedHistory });
+
+  // Inject RAG context into the user's message (not the system prompt)
+  const userMessage = contextBlock
+    ? `Context from my files:\n${contextBlock}\n\nQuestion: ${query}`
+    : query;
+
+  console.log("[rag] Sending to Gemini via chat.sendMessage...");
   try {
-    const result = await model.generateContent(prompt);
-    return {
-      answer: result.response.text(),
-      // Return the full paths so they can be opened in finder
-      contextFiles: relevantContexts.map((c) => c.path)
-    };
+    const result = await chat.sendMessage(userMessage);
+    let responseText = result.response.text();
+
+    // Parse the USED_SOURCES line the model always emits
+    let usedSources: string[] = [];
+    const sourcesMatch = responseText.match(/USED_SOURCES:\s*(.+)/i);
+    if (sourcesMatch) {
+      const raw = sourcesMatch[1].trim();
+      if (raw.toUpperCase() !== "NONE") {
+        usedSources = raw.split(",").map(s => s.trim()).filter(Boolean);
+      }
+      // Strip it from the visible answer
+      responseText = responseText.replace(/\n?USED_SOURCES:\s*.+/i, "").trim();
+    }
+
+    // Only surface paths for files the model explicitly cited
+    const contextFiles = relevantContexts
+      .filter(c => usedSources.some(s => c.filename.includes(s) || s.includes(c.filename)))
+      .map(c => c.path);
+
+    return { answer: responseText, contextFiles };
   } catch (err: any) {
-    console.error("Gemini API Error:", err);
+    console.error("[rag] Gemini API Error:", err);
     throw new Error(err.message || "Failed to contact Gemini API");
   }
 }
@@ -166,7 +195,7 @@ export async function categorizeBatch(files: { fileName: string, text: string }[
     `;
 
     const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" }); 
+    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" }); 
     const result = await model.generateContent(prompt);
     let responseText = result.response.text().trim();
     
