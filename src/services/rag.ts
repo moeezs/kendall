@@ -86,10 +86,8 @@ Rules:
 - Always end your response with exactly this line (no exceptions): USED_SOURCES: <comma-separated filenames you cited> or USED_SOURCES: NONE`,
   });
 
-  // Build proper Gemini history. Gemini expects alternating user/model turns.
-  // Map "ai" role → "model" as Gemini requires, and only include complete pairs.
   const formattedHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
-  const historySlice = chatHistory.slice(-10); // last 10 messages for context window efficiency
+  const historySlice = chatHistory.slice(-10);
 
   for (const msg of historySlice) {
     formattedHistory.push({
