@@ -57,6 +57,14 @@
     },
     "sql:allow-execute",
     "sql:allow-load",
-    "sql:allow-select"
+    "sql:allow-select",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        { "name": "node", "cmd": "node", "args": true, "sidecar": false }
+      ]
+    },
+    "shell:allow-kill",
+    "shell:allow-stdin-write"
   ]
 }

@@ -3,6 +3,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { pipeline } from "@huggingface/transformers";
 import BetterSqlite3 from "better-sqlite3";
 import os from "os";
+import http from "http";
 import { fileURLToPath } from "url";
 import { dirname, join } from "path";
 import { config } from "dotenv";
@@ -142,11 +143,10 @@ async function searchContext(query, topK = 3) {
   const rowsById = new Map(fullRows.map((row) => [row.id, row]));
 
   // Return full rows in score order, augmented with their score
-  return scored
-    .map((s) => {
-      const row = rowsById.get(s.id) || {};
-      return { ...row, score: s.score };
-    });
+  return scored.map((s) => {
+    const row = rowsById.get(s.id) || {};
+    return { ...row, score: s.score };
+  });
 }
 
 // db helpers
@@ -317,6 +317,25 @@ function splitMessage(text, maxLen) {
 }
 
 // launch the bot
+const STATUS_PORT = parseInt(process.env.STATUS_PORT || "3721", 10);
+
+// Start health server immediately so the Kendall app can detect us as soon as we load
+const healthServer = http.createServer((req, res) => {
+  if (req.method === "GET" && req.url === "/health") {
+    res.writeHead(200, {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": "*",
+    });
+    res.end(JSON.stringify({ status: "running", port: STATUS_PORT }));
+  } else {
+    res.writeHead(404);
+    res.end();
+  }
+});
+healthServer.listen(STATUS_PORT, "127.0.0.1", () => {
+  console.log(`   Status server: http://127.0.0.1:${STATUS_PORT}/health`);
+});
+
 bot.launch().then(() => {
   console.log("\n✅ Kendall Telegram bot running (long polling)");
   console.log(`   DB: ${DB_PATH}`);
