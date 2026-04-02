@@ -12,11 +12,9 @@ import { config } from "dotenv";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: join(__dirname, ".env") });
 
-for (const key of [
-  "GEMINI_API_KEY",
-  "TELEGRAM_BOT_TOKEN",
-  "TELEGRAM_ALLOWED_USER_ID",
-]) {
+const OLLAMA_BASE_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+
+for (const key of ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]) {
   if (!process.env[key]) {
     console.error(`❌ Missing required env var: ${key}`);
     console.error(`   Copy server/.env.example to server/.env and fill it in.`);
@@ -181,9 +179,42 @@ function loadHistory(maxTurns = 20) {
 }
 
 // gemini and rag
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+function getChatSettings() {
+  try {
+    db.prepare(
+      `CREATE TABLE IF NOT EXISTS ai_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL)`,
+    ).run();
+    const providerRow = db
+      .prepare("SELECT value FROM ai_settings WHERE key = ?")
+      .get("chat_provider");
+    const modelRow = db
+      .prepare("SELECT value FROM ai_settings WHERE key = ?")
+      .get("chat_model");
+    return {
+      provider: providerRow?.value || "gemini",
+      model: modelRow?.value || "gemini-2.5-flash-lite",
+    };
+  } catch {
+    return { provider: "gemini", model: "gemini-2.5-flash-lite" };
+  }
+}
+
+async function ollamaChat(model, messages) {
+  const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, messages, stream: false }),
+  });
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "Unknown error");
+    throw new Error(`Ollama chat failed (${res.status}): ${errText}`);
+  }
+  const data = await res.json();
+  return data.message?.content || "";
+}
 
 async function askKendall(userText) {
+  const { provider, model: modelName } = getChatSettings();
   const allFiles = db
     .prepare("SELECT id FROM files WHERE embedding IS NOT NULL")
     .all();
@@ -199,9 +230,7 @@ async function askKendall(userText) {
           .join("\n\n---\n\n")
       : null;
 
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are Kendall, a concise and friendly personal AI assistant with access to ${allFiles.length} indexed local files.
+  const systemPrompt = `You are Kendall, a concise and friendly personal AI assistant with access to ${allFiles.length} indexed local files.
 
 Rules:
 - Be brief and conversational. You're on Telegram so keep it readable on a phone.
@@ -209,18 +238,39 @@ Rules:
 - When asked about the user's data, use the file context to answer accurately.
 - If the provided context is not relevant to the question, ignore it and answer naturally.
 - ONLY reference files you actually used to form your answer.
-- Always end your response with exactly: USED_SOURCES: <comma-separated filenames> or USED_SOURCES: NONE`,
-  });
-
-  const history = loadHistory(20);
-  const chat = model.startChat({ history });
+- Always end your response with exactly: USED_SOURCES: <comma-separated filenames> or USED_SOURCES: NONE`;
 
   const userMessage = contextBlock
     ? `Context from my files:\n${contextBlock}\n\nQuestion: ${userText}`
     : userText;
 
-  const result = await chat.sendMessage(userMessage);
-  let responseText = result.response.text();
+  let responseText;
+
+  if (provider === "ollama") {
+    const history = loadHistory(20);
+    const messages = [
+      { role: "system", content: systemPrompt },
+      ...history.map((h) => ({
+        role: h.role === "model" ? "assistant" : "user",
+        content: h.parts[0].text,
+      })),
+      { role: "user", content: userMessage },
+    ];
+    responseText = await ollamaChat(modelName, messages);
+  } else {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Missing GEMINI_API_KEY env var.");
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      systemInstruction: systemPrompt,
+    });
+
+    const history = loadHistory(20);
+    const chat = model.startChat({ history });
+    const result = await chat.sendMessage(userMessage);
+    responseText = result.response.text();
+  }
 
   // Parse the USED_SOURCES line
   let usedSources = [];
@@ -321,12 +371,18 @@ const STATUS_PORT = parseInt(process.env.STATUS_PORT || "3721", 10);
 
 // Start health server immediately so the Kendall app can detect us as soon as we load
 const healthServer = http.createServer((req, res) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
   if (req.method === "GET" && req.url === "/health") {
-    res.writeHead(200, {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-    });
+    res.writeHead(200, { "Content-Type": "application/json" });
     res.end(JSON.stringify({ status: "running", port: STATUS_PORT }));
+  } else if (req.method === "POST" && req.url === "/shutdown") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ ok: true }));
+    console.log("[health] Shutdown requested via HTTP — exiting.");
+    bot.stop("SHUTDOWN");
+    healthServer.close(() => process.exit(0));
+    // Force-exit after 2s in case graceful close hangs
+    setTimeout(() => process.exit(0), 2000);
   } else {
     res.writeHead(404);
     res.end();

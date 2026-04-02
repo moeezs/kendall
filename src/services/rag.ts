@@ -1,6 +1,8 @@
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateEmbedding } from "./ai";
 import { getAllFiles } from "./database";
+import { getProviderAndModel } from "./settings";
+import { ollamaGenerate, ollamaChat } from "./ollama";
 
 // Cosine similarity function
 function cosineSimilarity(vecA: number[], vecB: number[]) {
@@ -53,8 +55,7 @@ export async function searchContext(query: string, topK: number = 3) {
 
 // generation
 export async function askKendallOS(query: string, chatHistory: {role: string, content: string}[] = []) {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Missing Gemini API Key. Please add it to your .env file.");
+  const { provider, model: modelName } = await getProviderAndModel("chat");
 
   console.log("[rag] Searching local database for context...");
   const contexts = await searchContext(query, 3);
@@ -70,72 +71,81 @@ export async function askKendallOS(query: string, chatHistory: {role: string, co
         .join("\n\n---\n\n")
     : null;
 
-  const genAI = new GoogleGenerativeAI(apiKey);
-
-  // System instruction is passed separately — NOT as part of the conversation history.
-  // This is the correct Gemini API pattern for setting a persistent persona.
-  const model = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are Kendall OS, a concise and friendly personal AI assistant with access to ${allFiles.length} indexed local files from the user's system.
+  const systemPrompt = `You are Kendall OS, a concise and friendly personal AI assistant with access to ${allFiles.length} indexed local files from the user's system.
 
 Rules:
 - Be brief and conversational. Avoid long essays or bullet-point dumps.
 - When asked about the user's data, use the file context provided in the message to answer accurately.
 - If the provided context is NOT relevant to the question, do NOT cite it. Just answer naturally or say you couldn't find it.
 - ONLY reference files you actually used to form your answer.
-- Always end your response with exactly this line (no exceptions): USED_SOURCES: <comma-separated filenames you cited> or USED_SOURCES: NONE`,
-  });
-
-  const formattedHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
-  const historySlice = chatHistory.slice(-10);
-
-  for (const msg of historySlice) {
-    formattedHistory.push({
-      role: msg.role === "user" ? "user" : "model",
-      parts: [{ text: msg.content }],
-    });
-  }
-
-  // Start a proper multi-turn chat session with history
-  const chat = model.startChat({ history: formattedHistory });
+- Always end your response with exactly this line (no exceptions): USED_SOURCES: <comma-separated filenames you cited> or USED_SOURCES: NONE`;
 
   // Inject RAG context into the user's message (not the system prompt)
   const userMessage = contextBlock
     ? `Context from my files:\n${contextBlock}\n\nQuestion: ${query}`
     : query;
 
-  console.log("[rag] Sending to Gemini via chat.sendMessage...");
-  try {
-    const result = await chat.sendMessage(userMessage);
-    let responseText = result.response.text();
+  let responseText: string;
 
-    // Parse the USED_SOURCES line the model always emits
-    let usedSources: string[] = [];
-    const sourcesMatch = responseText.match(/USED_SOURCES:\s*(.+)/i);
-    if (sourcesMatch) {
-      const raw = sourcesMatch[1].trim();
-      if (raw.toUpperCase() !== "NONE") {
-        usedSources = raw.split(",").map(s => s.trim()).filter(Boolean);
-      }
-      // Strip it from the visible answer
-      responseText = responseText.replace(/\n?USED_SOURCES:\s*.+/i, "").trim();
+  if (provider === "ollama") {
+    console.log(`[rag] Sending to Ollama (${modelName}) via chat...`);
+    const messages: { role: "system" | "user" | "assistant"; content: string }[] = [
+      { role: "system", content: systemPrompt },
+    ];
+    for (const msg of chatHistory.slice(-10)) {
+      messages.push({
+        role: msg.role === "user" ? "user" : "assistant",
+        content: msg.content,
+      });
+    }
+    messages.push({ role: "user", content: userMessage });
+
+    responseText = await ollamaChat(modelName, messages);
+  } else {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+    if (!apiKey) throw new Error("Missing Gemini API Key. Please add it to your .env file.");
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const model = genAI.getGenerativeModel({
+      model: modelName,
+      systemInstruction: systemPrompt,
+    });
+
+    const formattedHistory: { role: "user" | "model"; parts: { text: string }[] }[] = [];
+    for (const msg of chatHistory.slice(-10)) {
+      formattedHistory.push({
+        role: msg.role === "user" ? "user" : "model",
+        parts: [{ text: msg.content }],
+      });
     }
 
-    // Only surface paths for files the model explicitly cited
-    const contextFiles = relevantContexts
-      .filter(c => usedSources.some(s => c.filename.includes(s) || s.includes(c.filename)))
-      .map(c => c.path);
-
-    return { answer: responseText, contextFiles };
-  } catch (err: any) {
-    console.error("[rag] Gemini API Error:", err);
-    throw new Error(err.message || "Failed to contact Gemini API");
+    const chat = model.startChat({ history: formattedHistory });
+    console.log("[rag] Sending to Gemini via chat.sendMessage...");
+    const result = await chat.sendMessage(userMessage);
+    responseText = result.response.text();
   }
+
+  // Parse the USED_SOURCES line the model always emits
+  let usedSources: string[] = [];
+  const sourcesMatch = responseText.match(/USED_SOURCES:\s*(.+)/i);
+  if (sourcesMatch) {
+    const raw = sourcesMatch[1].trim();
+    if (raw.toUpperCase() !== "NONE") {
+      usedSources = raw.split(",").map(s => s.trim()).filter(Boolean);
+    }
+    responseText = responseText.replace(/\n?USED_SOURCES:\s*.+/i, "").trim();
+  }
+
+  const contextFiles = relevantContexts
+    .filter(c => usedSources.some(s => c.filename.includes(s) || s.includes(c.filename)))
+    .map(c => c.path);
+
+  return { answer: responseText, contextFiles };
 }
 
 export async function categorizeFile(fileText: string, availableFolders: string[]) {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) return "Misc";
+  const { provider, model: modelName } = await getProviderAndModel("autosort");
+
   try {
     const prompt = `
       You are an automated file sorter.
@@ -150,11 +160,17 @@ export async function categorizeFile(fileText: string, availableFolders: string[
       ${fileText.substring(0, 1500)}
     `;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" }); 
-    const result = await model.generateContent(prompt);
-    return result.response.text().trim();
-    
+    if (provider === "ollama") {
+      const result = await ollamaGenerate(modelName, prompt);
+      return result.trim();
+    } else {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) return "Misc";
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      return result.response.text().trim();
+    }
   } catch (error) {
     console.error("Sorting error:", error);
     return "Random";
@@ -163,12 +179,9 @@ export async function categorizeFile(fileText: string, availableFolders: string[
 
 // Batch Auto-Sort (Handles 15+ files in 1 API Call)
 export async function categorizeBatch(files: { fileName: string, text: string }[], availableFolders: string[]): Promise<Record<string, string>> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) {
-    return files.reduce((acc, f) => ({ ...acc, [f.fileName]: "Misc" }), {});
-  }
-  
   if (files.length === 0) return {};
+
+  const { provider, model: modelName } = await getProviderAndModel("autosort");
 
   try {
     const filePreviews = files.map(f => ({
@@ -192,11 +205,21 @@ export async function categorizeBatch(files: { fileName: string, text: string }[
       ${JSON.stringify(filePreviews, null, 2)}
     `;
 
-    const genAI = new GoogleGenerativeAI(apiKey);
-    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-lite" }); 
-    const result = await model.generateContent(prompt);
-    let responseText = result.response.text().trim();
-    
+    let responseText: string;
+
+    if (provider === "ollama") {
+      responseText = await ollamaGenerate(modelName, prompt);
+    } else {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) {
+        return files.reduce((acc, f) => ({ ...acc, [f.fileName]: "Misc" }), {});
+      }
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({ model: modelName });
+      const result = await model.generateContent(prompt);
+      responseText = result.response.text().trim();
+    }
+
     // Clean up potential markdown formatting if the model slipped up
     if (responseText.startsWith("\`\`\`json")) {
       responseText = responseText.replace(/^\`\`\`json/, "").replace(/\`\`\`$/, "").trim();
@@ -225,10 +248,23 @@ export async function generateDocument(
   fileContents: { filename: string; content: string }[],
   onStep: (step: AgentStep) => void,
 ): Promise<string> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Missing Gemini API Key.");
+  const { provider, model: modelName } = await getProviderAndModel("work");
 
-  const genAI = new GoogleGenerativeAI(apiKey);
+  // Helper: generate text with the configured provider
+  async function gen(userPrompt: string, system?: string): Promise<string> {
+    if (provider === "ollama") {
+      return ollamaGenerate(modelName, userPrompt, system);
+    } else {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) throw new Error("Missing Gemini API Key.");
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const opts: any = { model: modelName };
+      if (system) opts.systemInstruction = system;
+      const model = genAI.getGenerativeModel(opts);
+      const result = await model.generateContent(userPrompt);
+      return result.response.text().trim();
+    }
+  }
 
   // ── Phase 1: Research ──
   onStep({ phase: "researching", message: "Analyzing project files and searching for relevant context..." });
@@ -258,15 +294,12 @@ export async function generateDocument(
   // ── Phase 2: Planning ──
   onStep({ phase: "planning", message: "Creating document outline..." });
 
-  const planner = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are a document architect. Given a request and source material, create a structured outline for the document.
+  const planSystem = `You are a document architect. Given a request and source material, create a structured outline for the document.
 
 Reply with ONLY a valid JSON object — no markdown, no code fences, no explanation:
 {"title": "Document Title", "sections": [{"heading": "Section Heading", "brief": "2-3 sentence description of what this section should cover and what information to include"}]}
 
-Create between 3 and 8 sections depending on the complexity of the request. Each section brief should be specific and actionable.`,
-  });
+Create between 3 and 8 sections depending on the complexity of the request. Each section brief should be specific and actionable.`;
 
   const planPrompt = `Project: ${projectName}
 User's request: ${prompt}
@@ -278,8 +311,7 @@ Create a document outline that best addresses the user's request.`;
 
   let outline: { title: string; sections: { heading: string; brief: string }[] };
   try {
-    const planResult = await planner.generateContent(planPrompt);
-    let planText = planResult.response.text().trim();
+    let planText = await gen(planPrompt, planSystem);
     if (planText.startsWith("```")) {
       planText = planText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
     }
@@ -306,9 +338,7 @@ Create a document outline that best addresses the user's request.`;
   });
 
   // ── Phase 3: Writing (section by section) ──
-  const writer = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are a professional document writer. Write the requested section of a document.
+  const writerSystem = `You are a professional document writer. Write the requested section of a document.
 
 Rules:
 - Write in clear, professional prose.
@@ -316,8 +346,7 @@ Rules:
 - Write substantively — each section should be 2-6 detailed paragraphs.
 - Use specific information from the provided source files when relevant.
 - Maintain consistency with previously written sections.
-- Output ONLY the section body text. Do NOT repeat the section heading — it is added automatically.`,
-  });
+- Output ONLY the section body text. Do NOT repeat the section heading — it is added automatically.`;
 
   const writtenSections: string[] = [];
 
@@ -345,8 +374,7 @@ ${previousSummary}
 Write this section now. Be thorough and substantive.`;
 
     try {
-      const sectionResult = await writer.generateContent(sectionPrompt);
-      const sectionText = sectionResult.response.text().trim();
+      const sectionText = await gen(sectionPrompt, writerSystem);
       writtenSections.push(sectionText);
     } catch (err: any) {
       console.error(`[agent] Failed to write section "${section.heading}":`, err);
@@ -363,23 +391,20 @@ Write this section now. Be thorough and substantive.`;
   // ── Phase 5: Refine ──
   onStep({ phase: "refining", message: "Reviewing and polishing the complete document..." });
 
-  const refiner = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are a document editor. Polish and refine the given document draft.
+  const refineSystem = `You are a document editor. Polish and refine the given document draft.
 
 Rules:
 - Fix inconsistencies, awkward phrasing, and factual errors.
 - Improve transitions and flow between sections.
 - Do NOT use markdown formatting. Plain text only, with section headings on their own lines.
 - Keep the exact same structure (title + sections). Do NOT add or remove sections.
-- Output the complete refined document.`,
-  });
+- Output the complete refined document.`;
 
   try {
-    const refineResult = await refiner.generateContent(
+    draft = await gen(
       `Review and polish this document draft. Preserve the structure exactly.\n\n${draft}`,
+      refineSystem,
     );
-    draft = refineResult.response.text().trim();
   } catch (err) {
     console.error("[agent] Refining failed, using unrefined draft:", err);
   }
@@ -397,10 +422,7 @@ export async function reviseDocument(
   fileContents: { filename: string; content: string }[],
   onStep: (step: AgentStep) => void,
 ): Promise<string> {
-  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-  if (!apiKey) throw new Error("Missing Gemini API Key.");
-
-  const genAI = new GoogleGenerativeAI(apiKey);
+  const { provider, model: modelName } = await getProviderAndModel("work");
 
   // ── Phase 1: Analyze ──
   onStep({ phase: "researching", message: "Analyzing revision instructions and existing document..." });
@@ -412,9 +434,7 @@ export async function reviseDocument(
   // ── Phase 2: Targeted revision ──
   onStep({ phase: "refining", message: "Applying targeted revisions to document..." });
 
-  const reviser = genAI.getGenerativeModel({
-    model: "gemini-2.5-flash-lite",
-    systemInstruction: `You are a precise document revision specialist. You receive an existing document and specific revision instructions.
+  const reviseSystem = `You are a precise document revision specialist. You receive an existing document and specific revision instructions.
 
 Rules:
 - Make ONLY the changes requested. Preserve everything that isn't being changed.
@@ -423,8 +443,7 @@ Rules:
 - If asked to add content, insert it in the most appropriate location.
 - If asked to remove content, remove it cleanly without leaving gaps.
 - If asked to change tone or style, apply it consistently throughout.
-- Output the complete revised document (not just the changed parts).`,
-  });
+- Output the complete revised document (not just the changed parts).`;
 
   const revisionPromptText = `Project: ${projectName}
 
@@ -439,8 +458,19 @@ Apply the revision instructions above. Change only what is specified — preserv
 
   let revised = existingDocument;
   try {
-    const result = await reviser.generateContent(revisionPromptText);
-    revised = result.response.text().trim();
+    if (provider === "ollama") {
+      revised = await ollamaGenerate(modelName, revisionPromptText, reviseSystem);
+    } else {
+      const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+      if (!apiKey) throw new Error("Missing Gemini API Key.");
+      const genAI = new GoogleGenerativeAI(apiKey);
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction: reviseSystem,
+      });
+      const result = await model.generateContent(revisionPromptText);
+      revised = result.response.text().trim();
+    }
   } catch (err: any) {
     console.error("[agent] Revision failed:", err);
     throw new Error(err.message || "Revision failed");

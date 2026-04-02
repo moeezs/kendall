@@ -79,27 +79,23 @@ export function WorkSection() {
   // Bot polling
   useEffect(() => {
     let cancelled = false;
-    let id: ReturnType<typeof setInterval> | null = null;
 
     async function poll() {
       if (cancelled) return;
       const alive = await checkHealth();
       if (!cancelled) {
         setBotStatus((prev) => {
-          if (prev === "starting" || prev === "stopping") return prev;
+          // Only update during stable states — let start/stop sequences own their transitions
+          if (prev === "starting") return prev;
+          if (prev === "stopping") return alive ? prev : "stopped";
           return alive ? "running" : "stopped";
         });
-        // Stop polling once we confirm it's down — no more console errors
-        if (!alive && id) {
-          clearInterval(id);
-          id = null;
-        }
       }
     }
 
     poll();
-    id = setInterval(poll, POLL_INTERVAL);
-    return () => { cancelled = true; if (id) clearInterval(id); };
+    const id = setInterval(poll, POLL_INTERVAL);
+    return () => { cancelled = true; clearInterval(id); };
   }, []);
 
   // Load projects on mount
@@ -281,6 +277,13 @@ export function WorkSection() {
     setBotStatus("starting");
     try {
       const scriptPath = await getServerScriptPath();
+      // Guard: if something is already listening on the health port, we're already running
+      const alreadyRunning = await checkHealth();
+      if (alreadyRunning) {
+        setBotStatus("running");
+        return;
+      }
+
       const appId =
         import.meta.env.VITE_KENDALL_APP_ID ??
         import.meta.env.KENDALL_APP_ID;
@@ -325,14 +328,32 @@ export function WorkSection() {
   async function stopBot() {
     setBotStatus("stopping");
     try {
-      if (childRef.current) { await childRef.current.kill(); childRef.current = null; }
+      if (childRef.current) {
+        // We have a direct reference — kill via Tauri child process
+        await childRef.current.kill();
+        childRef.current = null;
+      } else {
+        // No reference (e.g. app was reopened while bot was already running)
+        // Ask the server to shut itself down via HTTP
+        try {
+          await fetch(`http://127.0.0.1:${STATUS_PORT}/shutdown`, {
+            method: "POST",
+            signal: AbortSignal.timeout(3000),
+          });
+        } catch {
+          // Server already gone or didn't respond — that's fine
+        }
+      }
+      // Poll until the process is confirmed dead
       let attempts = 0;
       const wait = setInterval(async () => {
         attempts++;
         const alive = await checkHealth();
-        if (!alive) { clearInterval(wait); setBotStatus("stopped"); }
-        else if (attempts >= 10) { clearInterval(wait); setBotStatus("stopped"); }
-      }, 500);
+        if (!alive || attempts >= 15) {
+          clearInterval(wait);
+          setBotStatus(alive ? "running" : "stopped");
+        }
+      }, 300);
     } catch (err) {
       console.error("Failed to stop bot:", err);
       setBotStatus("unknown");
