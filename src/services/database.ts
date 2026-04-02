@@ -41,6 +41,33 @@ async function initDb(db: Database) {
       FOREIGN KEY(chat_id) REFERENCES chats(id) ON DELETE CASCADE
     );
   `);
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS projects (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Migration: ensure project_files has the correct schema.
+  // A previous version may have created it with different columns.
+  try {
+    await db.select("SELECT file_id FROM project_files LIMIT 0");
+  } catch {
+    await db.execute("DROP TABLE IF EXISTS project_files");
+  }
+
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS project_files (
+      project_id TEXT NOT NULL,
+      file_id INTEGER NOT NULL,
+      PRIMARY KEY (project_id, file_id),
+      FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE,
+      FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
+    );
+  `);
 }
 
 export async function saveFileRecord(
@@ -120,5 +147,60 @@ export async function deleteChat(chatId: string) {
   const db = await getDb();
   await db.execute("DELETE FROM messages WHERE chat_id = $1", [chatId]);
   await db.execute("DELETE FROM chats WHERE id = $1", [chatId]);
+}
+
+// ── Projects ──
+
+export async function createProject(id: string, name: string, description: string = "") {
+  const db = await getDb();
+  await db.execute("INSERT INTO projects (id, name, description) VALUES ($1, $2, $3)", [id, name, description]);
+}
+
+export async function getProjects() {
+  const db = await getDb();
+  return await db.select<any[]>("SELECT * FROM projects ORDER BY created_at DESC");
+}
+
+export async function updateProject(id: string, name: string, description: string) {
+  const db = await getDb();
+  await db.execute("UPDATE projects SET name = $1, description = $2 WHERE id = $3", [name, description, id]);
+}
+
+export async function deleteProject(id: string) {
+  const db = await getDb();
+  await db.execute("DELETE FROM project_files WHERE project_id = $1", [id]);
+  await db.execute("DELETE FROM projects WHERE id = $1", [id]);
+}
+
+export async function getProjectFiles(projectId: string) {
+  const db = await getDb();
+  return await db.select<any[]>(
+    `SELECT f.id, f.path, f.filename, length(f.content) as content_length
+     FROM project_files pf
+     JOIN files f ON pf.file_id = f.id
+     WHERE pf.project_id = $1`,
+    [projectId]
+  );
+}
+
+export async function getProjectFileContents(projectId: string) {
+  const db = await getDb();
+  return await db.select<any[]>(
+    `SELECT f.id, f.path, f.filename, f.content
+     FROM project_files pf
+     JOIN files f ON pf.file_id = f.id
+     WHERE pf.project_id = $1`,
+    [projectId]
+  );
+}
+
+export async function addProjectFile(projectId: string, fileId: number) {
+  const db = await getDb();
+  await db.execute("INSERT OR IGNORE INTO project_files (project_id, file_id) VALUES ($1, $2)", [projectId, fileId]);
+}
+
+export async function removeProjectFile(projectId: string, fileId: number) {
+  const db = await getDb();
+  await db.execute("DELETE FROM project_files WHERE project_id = $1 AND file_id = $2", [projectId, fileId]);
 }
 
