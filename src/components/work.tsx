@@ -282,8 +282,22 @@ export function WorkSection() {
     try {
       const scriptPath = await getServerScriptPath();
       const appId =
-        import.meta.env.KENDALL_APP_ID ||
-        import.meta.env.VITE_KENDALL_APP_ID
+        import.meta.env.VITE_KENDALL_APP_ID ??
+        import.meta.env.KENDALL_APP_ID;
+
+      if (!appId) {
+        console.error(
+          "KENDALL_APP_ID is not configured. Please set VITE_KENDALL_APP_ID (or KENDALL_APP_ID) in your environment."
+        );
+        if (typeof window !== "undefined") {
+          window.alert(
+            "Unable to start Kendall bot: KENDALL_APP_ID is not configured.\n\n" +
+            "Please set VITE_KENDALL_APP_ID (or KENDALL_APP_ID) in your environment and restart the application."
+          );
+        }
+        setBotStatus("stopped");
+        return;
+      }
       const command = Command.create("node", [scriptPath], {
         env: { KENDALL_APP_ID: appId },
       });
