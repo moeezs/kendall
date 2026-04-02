@@ -52,6 +52,10 @@
       "allow": [{ "path": "$DESKTOP/kendall/**" }]
     },
     {
+      "identifier": "fs:allow-write-file",
+      "allow": [{ "path": "$DESKTOP/kendall/**" }]
+    },
+    {
       "identifier": "opener:allow-open-path",
       "allow": [{ "path": "$DESKTOP/kendall/**" }]
     },

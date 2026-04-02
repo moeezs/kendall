@@ -210,3 +210,242 @@ export async function categorizeBatch(files: { fileName: string, text: string }[
     return files.reduce((acc, f) => ({ ...acc, [f.fileName]: "Misc" }), {});
   }
 }
+
+// ── Agentic Document Generation ──
+
+export interface AgentStep {
+  phase: "researching" | "planning" | "writing" | "refining" | "done" | "error";
+  message: string;
+  detail?: string;
+}
+
+export async function generateDocument(
+  prompt: string,
+  projectName: string,
+  fileContents: { filename: string; content: string }[],
+  onStep: (step: AgentStep) => void,
+): Promise<string> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing Gemini API Key.");
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // ── Phase 1: Research ──
+  onStep({ phase: "researching", message: "Analyzing project files and searching for relevant context..." });
+
+  const fileOverview = fileContents.map((f) => `- ${f.filename} (${f.content.length} chars)`).join("\n");
+  const projectContext = fileContents
+    .map((f) => `[${f.filename}]\n${f.content.substring(0, 4000)}`)
+    .join("\n\n---\n\n");
+
+  // RAG search for additional context beyond linked files
+  const ragResults = await searchContext(prompt, 5);
+  const extraFiles = ragResults
+    .filter((r) => r.score > 0.25 && !fileContents.some((f) => f.filename === r.filename))
+    .slice(0, 3);
+
+  const extraContext = extraFiles
+    .map((f) => `[${f.filename}]\n${(f.content || "").substring(0, 2000)}`)
+    .join("\n\n---\n\n");
+
+  onStep({
+    phase: "researching",
+    message: `Found ${fileContents.length} project file${fileContents.length !== 1 ? "s" : ""}${extraFiles.length > 0 ? ` + ${extraFiles.length} related indexed file${extraFiles.length !== 1 ? "s" : ""}` : ""}.`,
+  });
+
+  const fullContext = projectContext + (extraContext ? "\n\n---\n\n" + extraContext : "");
+
+  // ── Phase 2: Planning ──
+  onStep({ phase: "planning", message: "Creating document outline..." });
+
+  const planner = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    systemInstruction: `You are a document architect. Given a request and source material, create a structured outline for the document.
+
+Reply with ONLY a valid JSON object — no markdown, no code fences, no explanation:
+{"title": "Document Title", "sections": [{"heading": "Section Heading", "brief": "2-3 sentence description of what this section should cover and what information to include"}]}
+
+Create between 3 and 8 sections depending on the complexity of the request. Each section brief should be specific and actionable.`,
+  });
+
+  const planPrompt = `Project: ${projectName}
+User's request: ${prompt}
+
+Available source files:
+${fileOverview || "(no project files linked)"}
+
+Create a document outline that best addresses the user's request.`;
+
+  let outline: { title: string; sections: { heading: string; brief: string }[] };
+  try {
+    const planResult = await planner.generateContent(planPrompt);
+    let planText = planResult.response.text().trim();
+    if (planText.startsWith("```")) {
+      planText = planText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    }
+    outline = JSON.parse(planText);
+    if (!outline.title || !Array.isArray(outline.sections) || outline.sections.length === 0) {
+      throw new Error("Invalid outline structure");
+    }
+  } catch (err) {
+    console.error("[agent] Outline parse failed, using fallback:", err);
+    outline = {
+      title: projectName,
+      sections: [
+        { heading: "Overview", brief: "High-level overview addressing the request." },
+        { heading: "Details", brief: `Detailed response to: ${prompt}` },
+        { heading: "Conclusion", brief: "Summary and closing remarks." },
+      ],
+    };
+  }
+
+  onStep({
+    phase: "planning",
+    message: `Outline ready: "${outline.title}" — ${outline.sections.length} sections`,
+    detail: outline.sections.map((s, i) => `${i + 1}. ${s.heading}`).join("\n"),
+  });
+
+  // ── Phase 3: Writing (section by section) ──
+  const writer = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    systemInstruction: `You are a professional document writer. Write the requested section of a document.
+
+Rules:
+- Write in clear, professional prose.
+- Do NOT use markdown formatting (no #, **, *, etc.). Use plain text only.
+- Write substantively — each section should be 2-6 detailed paragraphs.
+- Use specific information from the provided source files when relevant.
+- Maintain consistency with previously written sections.
+- Output ONLY the section body text. Do NOT repeat the section heading — it is added automatically.`,
+  });
+
+  const writtenSections: string[] = [];
+
+  for (let i = 0; i < outline.sections.length; i++) {
+    const section = outline.sections[i];
+    onStep({
+      phase: "writing",
+      message: `Writing section ${i + 1}/${outline.sections.length}: "${section.heading}"...`,
+    });
+
+    const previousSummary =
+      writtenSections.length > 0
+        ? `\n\nPreviously written sections:\n${writtenSections.map((text, j) => `--- ${outline.sections[j].heading} ---\n${text.substring(0, 800)}`).join("\n\n")}`
+        : "";
+
+    const sectionPrompt = `Document title: "${outline.title}"
+
+Section to write now: "${section.heading}"
+Section brief: ${section.brief}
+
+Source material (use this to inform your writing):
+${fullContext.substring(0, 10000)}
+${previousSummary}
+
+Write this section now. Be thorough and substantive.`;
+
+    try {
+      const sectionResult = await writer.generateContent(sectionPrompt);
+      const sectionText = sectionResult.response.text().trim();
+      writtenSections.push(sectionText);
+    } catch (err: any) {
+      console.error(`[agent] Failed to write section "${section.heading}":`, err);
+      writtenSections.push(`[This section could not be generated: ${err.message}]`);
+    }
+  }
+
+  // ── Phase 4: Assemble draft ──
+  let draft = outline.title + "\n\n";
+  for (let i = 0; i < outline.sections.length; i++) {
+    draft += outline.sections[i].heading + "\n\n" + writtenSections[i] + "\n\n\n";
+  }
+
+  // ── Phase 5: Refine ──
+  onStep({ phase: "refining", message: "Reviewing and polishing the complete document..." });
+
+  const refiner = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    systemInstruction: `You are a document editor. Polish and refine the given document draft.
+
+Rules:
+- Fix inconsistencies, awkward phrasing, and factual errors.
+- Improve transitions and flow between sections.
+- Do NOT use markdown formatting. Plain text only, with section headings on their own lines.
+- Keep the exact same structure (title + sections). Do NOT add or remove sections.
+- Output the complete refined document.`,
+  });
+
+  try {
+    const refineResult = await refiner.generateContent(
+      `Review and polish this document draft. Preserve the structure exactly.\n\n${draft}`,
+    );
+    draft = refineResult.response.text().trim();
+  } catch (err) {
+    console.error("[agent] Refining failed, using unrefined draft:", err);
+  }
+
+  onStep({ phase: "done", message: "Document generation complete." });
+  return draft;
+}
+
+// ── Agentic Document Revision ──
+
+export async function reviseDocument(
+  existingDocument: string,
+  revisionInstructions: string,
+  projectName: string,
+  fileContents: { filename: string; content: string }[],
+  onStep: (step: AgentStep) => void,
+): Promise<string> {
+  const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+  if (!apiKey) throw new Error("Missing Gemini API Key.");
+
+  const genAI = new GoogleGenerativeAI(apiKey);
+
+  // ── Phase 1: Analyze ──
+  onStep({ phase: "researching", message: "Analyzing revision instructions and existing document..." });
+
+  const projectContext = fileContents
+    .map((f) => `[${f.filename}]\n${f.content.substring(0, 3000)}`)
+    .join("\n\n---\n\n");
+
+  // ── Phase 2: Targeted revision ──
+  onStep({ phase: "refining", message: "Applying targeted revisions to document..." });
+
+  const reviser = genAI.getGenerativeModel({
+    model: "gemini-2.5-flash-lite",
+    systemInstruction: `You are a precise document revision specialist. You receive an existing document and specific revision instructions.
+
+Rules:
+- Make ONLY the changes requested. Preserve everything that isn't being changed.
+- Do NOT rewrite sections that don't need revision — keep their wording as close to the original as possible.
+- Do NOT use markdown formatting. Plain text only, with section headings on their own lines.
+- If asked to add content, insert it in the most appropriate location.
+- If asked to remove content, remove it cleanly without leaving gaps.
+- If asked to change tone or style, apply it consistently throughout.
+- Output the complete revised document (not just the changed parts).`,
+  });
+
+  const revisionPromptText = `Project: ${projectName}
+
+Revision instructions: ${revisionInstructions}
+${fileContents.length > 0 ? `\nSource files for reference:\n${projectContext.substring(0, 6000)}\n\n` : ""}
+Current document:
+---
+${existingDocument}
+---
+
+Apply the revision instructions above. Change only what is specified — preserve everything else exactly as written. Return the complete revised document.`;
+
+  let revised = existingDocument;
+  try {
+    const result = await reviser.generateContent(revisionPromptText);
+    revised = result.response.text().trim();
+  } catch (err: any) {
+    console.error("[agent] Revision failed:", err);
+    throw new Error(err.message || "Revision failed");
+  }
+
+  onStep({ phase: "done", message: "Revision complete." });
+  return revised;
+}

@@ -12,6 +12,8 @@ export function ChatSection({ activeChatId, setActiveChatId }: { activeChatId?: 
   const loadedChatIdRef = useRef<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  const isTelegramChat = chatId === "telegram-bot";
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -155,6 +157,14 @@ export function ChatSection({ activeChatId, setActiveChatId }: { activeChatId?: 
       {/* Sticky Input Container */}
       <div className="absolute bottom-0 w-full p-6 bg-[#18181b]/80 backdrop-blur-md">
         <div className="max-w-4xl mx-auto relative group">
+          {isTelegramChat ? (
+            <div className="bg-[#202022] rounded-xl p-4 text-center border border-[#474848]/30">
+              <p className="text-xs text-[#acabab]">
+                <span className="material-symbols-outlined text-sm align-middle mr-1">smart_toy</span>
+                This is a Telegram conversation. Reply via Telegram to continue.
+              </p>
+            </div>
+          ) : (
           <div className="bg-[#202022] rounded-xl p-1 shadow-2xl transition-all border border-[#474848]/30 focus-within:border-[#adc6ff]/50">
             <div className="flex items-end gap-2 px-3 py-2">
               <textarea 
@@ -184,6 +194,7 @@ export function ChatSection({ activeChatId, setActiveChatId }: { activeChatId?: 
               </button>
             </div>
           </div>
+          )}
         </div>
         <p className="text-center text-[10px] text-[#acabab] mt-3 opacity-60">
           Kendall operates locally. Your data never leaves this environment.

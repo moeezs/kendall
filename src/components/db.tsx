@@ -218,7 +218,9 @@ export function DbSection({ onOpenChat }: { onOpenChat?: (id: string) => void })
                 onClick={() => onOpenChat && onOpenChat(c.id)}
                 className="group flex items-center gap-3 bg-[#202022] rounded-lg px-4 py-2.5 border border-transparent hover:border-[#474848]/20 hover:bg-[#28282a] transition-all cursor-pointer"
               >
-                <span className="material-symbols-outlined text-[#acabab] group-hover:text-[#adc6ff] transition-colors text-base shrink-0">chat_bubble</span>
+                <span className="material-symbols-outlined text-[#acabab] group-hover:text-[#adc6ff] transition-colors text-base shrink-0">
+                  {c.id === "telegram-bot" ? "smart_toy" : "chat_bubble"}
+                </span>
                 <div className="min-w-0 flex-1 flex items-center gap-3">
                   <span className="text-sm font-medium text-[#e7e5e5] truncate">{c.title}</span>
                   <span className="text-[10px] text-[#acabab]/40 shrink-0">
