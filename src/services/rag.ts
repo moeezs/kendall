@@ -2,7 +2,7 @@ import { GoogleGenerativeAI } from "@google/generative-ai";
 import { generateEmbedding } from "./ai";
 import { getAllFiles } from "./database";
 import { getProviderAndModel } from "./settings";
-import { ollamaGenerate, ollamaChat } from "./ollama";
+import { ollamaGenerate, ollamaChat, isOllamaRunning } from "./ollama";
 
 // Cosine similarity function
 function cosineSimilarity(vecA: number[], vecB: number[]) {
@@ -250,10 +250,22 @@ export async function generateDocument(
 ): Promise<string> {
   const { provider, model: modelName } = await getProviderAndModel("work");
 
+  // Pre-flight: surface a clear error if Ollama is not running
+  if (provider === "ollama") {
+    const running = await isOllamaRunning();
+    if (!running) {
+      onStep({ phase: "error", message: "Ollama is not running. Please start Ollama and try again." });
+      throw new Error("Ollama is not running. Please start Ollama and try again.");
+    }
+  }
+
   // Helper: generate text with the configured provider
   async function gen(userPrompt: string, system?: string): Promise<string> {
     if (provider === "ollama") {
-      return ollamaGenerate(modelName, userPrompt, system);
+      const messages: { role: "system" | "user" | "assistant"; content: string }[] = [];
+      if (system) messages.push({ role: "system", content: system });
+      messages.push({ role: "user", content: userPrompt });
+      return ollamaChat(modelName, messages);
     } else {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) throw new Error("Missing Gemini API Key.");
@@ -294,14 +306,58 @@ export async function generateDocument(
   // ── Phase 2: Planning ──
   onStep({ phase: "planning", message: "Creating document outline..." });
 
-  const planSystem = `You are a document architect. Given a request and source material, create a structured outline for the document.
+  let outline: { title: string; sections: { heading: string; brief: string }[] };
+
+  if (provider === "ollama") {
+    // Local models: use a dead-simple TITLE/SECTION format — no JSON required, fast to generate
+    const simplePrompt = `Create a document outline.
+Project: ${projectName}
+Request: ${prompt}
+${fileOverview ? `Files:\n${fileOverview}` : ""}
+
+Reply ONLY with this exact format (no explanations, no numbering):
+TITLE: <document title>
+SECTION: <section heading>
+SECTION: <section heading>
+SECTION: <section heading>
+
+Use 3 to 5 sections.`;
+
+    console.log("[agent] Requesting outline from Ollama...");
+    try {
+      const planText = await ollamaChat(modelName, [{ role: "user", content: simplePrompt }], 60_000);
+      console.log("[agent] Outline response received:", planText.substring(0, 200));
+      const lines = planText.split("\n").map((l) => l.trim()).filter(Boolean);
+      const titleLine = lines.find((l) => l.toUpperCase().startsWith("TITLE:"));
+      const sectionLines = lines.filter((l) => l.toUpperCase().startsWith("SECTION:"));
+      if (!titleLine || sectionLines.length === 0) throw new Error("Could not parse outline from response");
+      outline = {
+        title: titleLine.replace(/^title:\s*/i, "").trim() || projectName,
+        sections: sectionLines.map((s) => ({
+          heading: s.replace(/^section:\s*/i, "").trim(),
+          brief: `Write content for this section based on: ${prompt}`,
+        })),
+      };
+    } catch (err) {
+      console.error("[agent] Outline generation failed, using fallback:", err);
+      outline = {
+        title: projectName,
+        sections: [
+          { heading: "Overview", brief: "High-level overview addressing the request." },
+          { heading: "Details", brief: `Detailed response to: ${prompt}` },
+          { heading: "Conclusion", brief: "Summary and closing remarks." },
+        ],
+      };
+    }
+  } else {
+    const planSystem = `You are a document architect. Given a request and source material, create a structured outline for the document.
 
 Reply with ONLY a valid JSON object — no markdown, no code fences, no explanation:
 {"title": "Document Title", "sections": [{"heading": "Section Heading", "brief": "2-3 sentence description of what this section should cover and what information to include"}]}
 
 Create between 3 and 8 sections depending on the complexity of the request. Each section brief should be specific and actionable.`;
 
-  const planPrompt = `Project: ${projectName}
+    const planPrompt = `Project: ${projectName}
 User's request: ${prompt}
 
 Available source files:
@@ -309,26 +365,28 @@ ${fileOverview || "(no project files linked)"}
 
 Create a document outline that best addresses the user's request.`;
 
-  let outline: { title: string; sections: { heading: string; brief: string }[] };
-  try {
-    let planText = await gen(planPrompt, planSystem);
-    if (planText.startsWith("```")) {
-      planText = planText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "").trim();
+    try {
+      let planText = await gen(planPrompt, planSystem);
+      if (planText.includes("```")) {
+        planText = planText.replace(/```(?:json)?\n?/g, "").replace(/```/g, "").trim();
+      }
+      const jsonMatch = planText.match(/\{[\s\S]*\}/);
+      if (jsonMatch) planText = jsonMatch[0];
+      outline = JSON.parse(planText);
+      if (!outline.title || !Array.isArray(outline.sections) || outline.sections.length === 0) {
+        throw new Error("Invalid outline structure");
+      }
+    } catch (err) {
+      console.error("[agent] Outline parse failed, using fallback:", err);
+      outline = {
+        title: projectName,
+        sections: [
+          { heading: "Overview", brief: "High-level overview addressing the request." },
+          { heading: "Details", brief: `Detailed response to: ${prompt}` },
+          { heading: "Conclusion", brief: "Summary and closing remarks." },
+        ],
+      };
     }
-    outline = JSON.parse(planText);
-    if (!outline.title || !Array.isArray(outline.sections) || outline.sections.length === 0) {
-      throw new Error("Invalid outline structure");
-    }
-  } catch (err) {
-    console.error("[agent] Outline parse failed, using fallback:", err);
-    outline = {
-      title: projectName,
-      sections: [
-        { heading: "Overview", brief: "High-level overview addressing the request." },
-        { heading: "Details", brief: `Detailed response to: ${prompt}` },
-        { heading: "Conclusion", brief: "Summary and closing remarks." },
-      ],
-    };
   }
 
   onStep({
@@ -357,12 +415,21 @@ Rules:
       message: `Writing section ${i + 1}/${outline.sections.length}: "${section.heading}"...`,
     });
 
-    const previousSummary =
-      writtenSections.length > 0
-        ? `\n\nPreviously written sections:\n${writtenSections.map((text, j) => `--- ${outline.sections[j].heading} ---\n${text.substring(0, 800)}`).join("\n\n")}`
-        : "";
-
-    const sectionPrompt = `Document title: "${outline.title}"
+    let sectionText: string;
+    try {
+      if (provider === "ollama") {
+        // Local models: compact prompt with a hard 2-minute per-section limit
+        const contextSnippet = fullContext.substring(0, 2000);
+        const ollamaSectionPrompt = `Write the "${section.heading}" section for a document titled "${outline.title}".${contextSnippet ? `\n\nContext:\n${contextSnippet}` : ""}\n\nWrite 2-4 paragraphs of professional prose. Plain text only, no markdown, do not repeat the heading.`;
+        console.log(`[agent] Writing section ${i + 1} via Ollama...`);
+        sectionText = await ollamaChat(modelName, [{ role: "user", content: ollamaSectionPrompt }], 120_000);
+        console.log(`[agent] Section ${i + 1} done (${sectionText.length} chars)`);
+      } else {
+        const previousSummary =
+          writtenSections.length > 0
+            ? `\n\nPreviously written sections:\n${writtenSections.map((text, j) => `--- ${outline.sections[j].heading} ---\n${text.substring(0, 800)}`).join("\n\n")}`
+            : "";
+        const sectionPrompt = `Document title: "${outline.title}"
 
 Section to write now: "${section.heading}"
 Section brief: ${section.brief}
@@ -372,10 +439,9 @@ ${fullContext.substring(0, 10000)}
 ${previousSummary}
 
 Write this section now. Be thorough and substantive.`;
-
-    try {
-      const sectionText = await gen(sectionPrompt, writerSystem);
-      writtenSections.push(sectionText);
+        sectionText = await gen(sectionPrompt, writerSystem);
+      }
+      writtenSections.push(sectionText || `[Section "${section.heading}" returned no content]`);
     } catch (err: any) {
       console.error(`[agent] Failed to write section "${section.heading}":`, err);
       writtenSections.push(`[This section could not be generated: ${err.message}]`);
@@ -389,9 +455,13 @@ Write this section now. Be thorough and substantive.`;
   }
 
   // ── Phase 5: Refine ──
-  onStep({ phase: "refining", message: "Reviewing and polishing the complete document..." });
+  if (provider === "ollama") {
+    // Skip the expensive refine pass for local models — return the assembled draft as-is
+    onStep({ phase: "refining", message: "Assembling final document..." });
+  } else {
+    onStep({ phase: "refining", message: "Reviewing and polishing the complete document..." });
 
-  const refineSystem = `You are a document editor. Polish and refine the given document draft.
+    const refineSystem = `You are a document editor. Polish and refine the given document draft.
 
 Rules:
 - Fix inconsistencies, awkward phrasing, and factual errors.
@@ -400,13 +470,14 @@ Rules:
 - Keep the exact same structure (title + sections). Do NOT add or remove sections.
 - Output the complete refined document.`;
 
-  try {
-    draft = await gen(
-      `Review and polish this document draft. Preserve the structure exactly.\n\n${draft}`,
-      refineSystem,
-    );
-  } catch (err) {
-    console.error("[agent] Refining failed, using unrefined draft:", err);
+    try {
+      draft = await gen(
+        `Review and polish this document draft. Preserve the structure exactly.\n\n${draft}`,
+        refineSystem,
+      );
+    } catch (err) {
+      console.error("[agent] Refining failed, using unrefined draft:", err);
+    }
   }
 
   onStep({ phase: "done", message: "Document generation complete." });
@@ -423,6 +494,15 @@ export async function reviseDocument(
   onStep: (step: AgentStep) => void,
 ): Promise<string> {
   const { provider, model: modelName } = await getProviderAndModel("work");
+
+  // Pre-flight: surface a clear error if Ollama is not running
+  if (provider === "ollama") {
+    const running = await isOllamaRunning();
+    if (!running) {
+      onStep({ phase: "error", message: "Ollama is not running. Please start Ollama and try again." });
+      throw new Error("Ollama is not running. Please start Ollama and try again.");
+    }
+  }
 
   // ── Phase 1: Analyze ──
   onStep({ phase: "researching", message: "Analyzing revision instructions and existing document..." });
@@ -459,7 +539,10 @@ Apply the revision instructions above. Change only what is specified — preserv
   let revised = existingDocument;
   try {
     if (provider === "ollama") {
-      revised = await ollamaGenerate(modelName, revisionPromptText, reviseSystem);
+      revised = await ollamaChat(modelName, [
+        { role: "system", content: reviseSystem },
+        { role: "user", content: revisionPromptText },
+      ]);
     } else {
       const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
       if (!apiKey) throw new Error("Missing Gemini API Key.");

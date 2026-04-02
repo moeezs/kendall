@@ -35,6 +35,8 @@ export async function ollamaGenerate(
   model: string,
   prompt: string,
   system?: string,
+  format?: "json",
+  timeoutMs = 300_000,
 ): Promise<string> {
   const body: Record<string, unknown> = {
     model,
@@ -42,11 +44,13 @@ export async function ollamaGenerate(
     stream: false,
   };
   if (system) body.system = system;
+  if (format) body.format = format;
 
   const res = await fetch(`${OLLAMA_BASE_URL}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok) {
@@ -61,11 +65,13 @@ export async function ollamaGenerate(
 export async function ollamaChat(
   model: string,
   messages: { role: "system" | "user" | "assistant"; content: string }[],
+  timeoutMs = 300_000,
 ): Promise<string> {
   const res = await fetch(`${OLLAMA_BASE_URL}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model, messages, stream: false }),
+    signal: AbortSignal.timeout(timeoutMs),
   });
 
   if (!res.ok) {

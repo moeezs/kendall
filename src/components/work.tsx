@@ -77,11 +77,16 @@ export function WorkSection() {
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
   // Bot polling
+  const botStatusRef = useRef<BotStatus>("unknown");
+  botStatusRef.current = botStatus;
+
   useEffect(() => {
     let cancelled = false;
 
     async function poll() {
       if (cancelled) return;
+      // Skip the health fetch entirely when we know the bot is stopped — avoids console spam
+      if (botStatusRef.current === "stopped") return;
       const alive = await checkHealth();
       if (!cancelled) {
         setBotStatus((prev) => {
