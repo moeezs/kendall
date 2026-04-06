@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Command, type Child } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
-import { writeFile } from "@tauri-apps/plugin-fs";
+import { writeFile, mkdir, remove } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
@@ -143,6 +143,16 @@ export function WorkSection() {
     if (!name) return;
     const id = crypto.randomUUID();
     await createProject(id, name);
+
+    // Create project directory on disk
+    try {
+      const desktop = await desktopDir();
+      const projectDir = await join(desktop, "kendall", "Projects", name);
+      await mkdir(projectDir, { recursive: true });
+    } catch (err) {
+      console.error("Failed to create project directory:", err);
+    }
+
     setNewProjectName("");
     setShowNewProject(false);
     await refreshProjects();
@@ -150,7 +160,20 @@ export function WorkSection() {
   }
 
   async function handleDeleteProject(id: string) {
+    // Get the project name before deleting so we can remove the directory
+    const project = projects.find((p) => p.id === id);
     await deleteProject(id);
+
+    if (project) {
+      try {
+        const desktop = await desktopDir();
+        const projectDir = await join(desktop, "kendall", "Projects", project.name);
+        await remove(projectDir, { recursive: true });
+      } catch (err) {
+        console.error("Failed to remove project directory:", err);
+      }
+    }
+
     if (activeProjectId === id) setActiveProjectId(null);
     await refreshProjects();
   }
@@ -241,11 +264,30 @@ export function WorkSection() {
     if (!generatedContent) return;
     const doc = new jsPDF();
     const title = activeProject?.name || "Document";
+    const pageHeight = doc.internal.pageSize.getHeight();
+    const marginTop = 20;
+    const marginBottom = 20;
+    const lineHeight = 6;
+    const contentWidth = 170;
+    let y = marginTop;
+
+    // Title
     doc.setFontSize(18);
-    doc.text(title, 20, 20);
+    doc.text(title, 20, y);
+    y += 12;
+
+    // Body — split into lines and paginate
     doc.setFontSize(11);
-    const lines = doc.splitTextToSize(generatedContent, 170);
-    doc.text(lines, 20, 35);
+    const lines: string[] = doc.splitTextToSize(generatedContent, contentWidth);
+    for (const line of lines) {
+      if (y + lineHeight > pageHeight - marginBottom) {
+        doc.addPage();
+        y = marginTop;
+      }
+      doc.text(line, 20, y);
+      y += lineHeight;
+    }
+
     const pdfBytes = doc.output("arraybuffer");
 
     const desktop = await desktopDir();
