@@ -7,11 +7,12 @@ import { generateEmbedding } from "./services/ai";
 import { saveFileRecord } from "./services/database";
 import { categorizeBatch } from "./services/rag";
 import { NavBar } from "@/components/ui/navbar";
-import { Home, MessageCircle, Briefcase, Database } from "lucide-react";
+import { Home, MessageCircle, Briefcase, Database, Settings } from "lucide-react";
 import { HomeSection } from "@/components/home";
 import { ChatSection } from "@/components/chat";
 import { WorkSection } from "@/components/work";
 import { DbSection } from "@/components/db";
+import { SettingsSection } from "@/components/settings";
 
 export interface SystemLog {
   action: string;
@@ -45,6 +46,7 @@ function App() {
       { name: 'Chat', url: '#', icon: MessageCircle },
       { name: 'Work', url: '#', icon: Briefcase },
       { name: 'DB', url: '#', icon: Database },
+      { name: 'Settings', url: '#', icon: Settings },
   ];
 
   useEffect(() => {
@@ -253,6 +255,7 @@ function App() {
         {activeTab === "Chat" && <ChatSection activeChatId={activeChatId} setActiveChatId={setActiveChatId} />}
         {activeTab === "Work" && <WorkSection />}
         {activeTab === "DB" && <DbSection onOpenChat={(id) => { setActiveChatId(id); setActiveTab("Chat"); }} />}
+        {activeTab === "Settings" && <SettingsSection />}
       </div>
     </div>
   );
