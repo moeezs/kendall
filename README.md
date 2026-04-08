@@ -27,10 +27,17 @@ Built with Tauri, React, TypeScript, and Rust. Runs entirely on macOS.
 
 ## Video Demos
 
-| Demo             | File                         | Description                                                                                                           |
-| ---------------- | ---------------------------- | --------------------------------------------------------------------------------------------------------------------- |
-| **Telegram Bot** | `demos/kendall-bot-demo.MP4` | Creates a new project via the Telegram bot and asks it to generate a PDF of an essay about the Dune movie.            |
-| **Desktop App**  | `demos/kendall-app-demo.mp4` | Drops files into the Dump folder so they get auto-sorted, then opens the Chat tab and asks when an assignment is due. |
+### Telegram Bot — Generate a PDF via chat
+
+Creates a new project via the Telegram bot and asks it to generate a PDF of an essay about the Dune movie.
+
+<video src="demos/kendall-bot-demo.MP4" controls width="100%"></video>
+
+### Desktop App — Auto-sort files and query the chat
+
+Sorts files into the right folders automatically, then asks the Chat tab when an assignment is due.
+
+<video src="demos/kendall-app-demo.mp4" controls width="100%"></video>
 
 ---
 
