@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Command, type Child } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeFile, mkdir, remove } from "@tauri-apps/plugin-fs";
 import { desktopDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
@@ -13,7 +14,7 @@ import { generateDocument, reviseDocument, type AgentStep } from "../services/ra
 import { Document, Packer, Paragraph, TextRun, HeadingLevel } from "docx";
 import { jsPDF } from "jspdf";
 
-// Bot status helpers (unchanged)
+// ── Bot constants ──
 
 const STATUS_PORT = 3721;
 const HEALTH_URL = `http://127.0.0.1:${STATUS_PORT}/health`;
@@ -34,6 +35,21 @@ async function checkHealth(): Promise<boolean> {
   }
 }
 
+/** Kill whatever is listening on STATUS_PORT (works even without a child ref). */
+async function killByPort(): Promise<void> {
+  try {
+    // macOS / Linux: find PID on the port and kill it
+    const lsofCmd = Command.create("lsof", ["-ti", `:${STATUS_PORT}`]);
+    const lsofOutput = await lsofCmd.execute();
+    const pids = (lsofOutput.stdout || "").trim().split("\n").filter(Boolean);
+    for (const pid of pids) {
+      try {
+        await Command.create("kill", ["-9", pid.trim()]).execute();
+      } catch { /* already dead */ }
+    }
+  } catch { /* lsof not available or nothing running */ }
+}
+
 function StatusDot({ status }: { status: BotStatus }) {
   const colors: Record<BotStatus, string> = {
     running: "bg-green-400",
@@ -47,12 +63,13 @@ function StatusDot({ status }: { status: BotStatus }) {
   );
 }
 
-// Main
+// ── Main component ──
 
 export function WorkSection() {
   // Bot state
   const [botStatus, setBotStatus] = useState<BotStatus>("unknown");
   const childRef = useRef<Child | null>(null);
+  const botActionRef = useRef(false); // prevents double-clicks / overlapping start-stop
 
   // Projects state
   const [projects, setProjects] = useState<any[]>([]);
@@ -76,30 +93,42 @@ export function WorkSection() {
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
 
-  // Bot polling
+  // Bot polling — runs continuously so we always know the real state
   useEffect(() => {
     let cancelled = false;
-    let id: ReturnType<typeof setInterval> | null = null;
 
     async function poll() {
       if (cancelled) return;
       const alive = await checkHealth();
       if (!cancelled) {
         setBotStatus((prev) => {
+          // Don't override transitional states (starting/stopping)
           if (prev === "starting" || prev === "stopping") return prev;
           return alive ? "running" : "stopped";
         });
-        // Stop polling once we confirm it's down — no more console errors
-        if (!alive && id) {
-          clearInterval(id);
-          id = null;
-        }
       }
     }
 
     poll();
-    id = setInterval(poll, POLL_INTERVAL);
-    return () => { cancelled = true; if (id) clearInterval(id); };
+    const id = setInterval(poll, POLL_INTERVAL);
+    return () => { cancelled = true; clearInterval(id); };
+  }, []);
+
+  // Kill bot when app window closes
+  useEffect(() => {
+    let unlisten: (() => void) | null = null;
+    getCurrentWindow().onCloseRequested(async (event) => {
+      event.preventDefault();
+      // Always kill the bot on exit — try child ref first, then port-based kill as fallback
+      if (childRef.current) {
+        try { await childRef.current.kill(); } catch {}
+        childRef.current = null;
+      } else {
+        try { await killByPort(); } catch {}
+      }
+      await getCurrentWindow().destroy();
+    }).then((fn) => { unlisten = fn; });
+    return () => { if (unlisten) unlisten(); };
   }, []);
 
   // Load projects on mount
@@ -320,8 +349,20 @@ export function WorkSection() {
 
   // Bot controls
   async function startBot() {
+    // Guard: don't start if already running or in transition
+    if (botActionRef.current) return;
+    const alreadyAlive = await checkHealth();
+    if (alreadyAlive) {
+      setBotStatus("running");
+      return;
+    }
+
+    botActionRef.current = true;
     setBotStatus("starting");
     try {
+      // Make sure nothing is already on the port
+      await killByPort();
+
       const scriptPath = await getServerScriptPath();
       const appId =
         import.meta.env.VITE_KENDALL_APP_ID ??
@@ -338,6 +379,7 @@ export function WorkSection() {
           );
         }
         setBotStatus("stopped");
+        botActionRef.current = false;
         return;
       }
       const command = Command.create("node", [scriptPath], {
@@ -351,33 +393,70 @@ export function WorkSection() {
       const child = await command.spawn();
       childRef.current = child;
 
+      // Wait for health endpoint to confirm it's up
       let attempts = 0;
       const wait = setInterval(async () => {
         attempts++;
         const alive = await checkHealth();
-        if (alive) { clearInterval(wait); setBotStatus("running"); }
-        else if (attempts >= 20) { clearInterval(wait); setBotStatus((p) => p === "starting" ? "stopped" : p); }
+        if (alive) {
+          clearInterval(wait);
+          setBotStatus("running");
+          botActionRef.current = false;
+        } else if (attempts >= 20) {
+          clearInterval(wait);
+          setBotStatus("stopped");
+          botActionRef.current = false;
+        }
       }, 1000);
     } catch (err) {
       console.error("Failed to start bot:", err);
       setBotStatus("stopped");
+      botActionRef.current = false;
     }
   }
 
   async function stopBot() {
+    // Guard: don't stop if already stopped or in transition
+    if (botActionRef.current) return;
+    const alreadyDead = !(await checkHealth());
+    if (alreadyDead) {
+      setBotStatus("stopped");
+      childRef.current = null;
+      return;
+    }
+
+    botActionRef.current = true;
     setBotStatus("stopping");
     try {
-      if (childRef.current) { await childRef.current.kill(); childRef.current = null; }
+      // Try child ref first, then port-based kill as fallback
+      if (childRef.current) {
+        try { await childRef.current.kill(); } catch {}
+        childRef.current = null;
+      } else {
+        await killByPort();
+      }
+
+      // Wait for health endpoint to confirm it's down
       let attempts = 0;
       const wait = setInterval(async () => {
         attempts++;
         const alive = await checkHealth();
-        if (!alive) { clearInterval(wait); setBotStatus("stopped"); }
-        else if (attempts >= 10) { clearInterval(wait); setBotStatus("stopped"); }
+        if (!alive) {
+          clearInterval(wait);
+          setBotStatus("stopped");
+          botActionRef.current = false;
+        } else if (attempts >= 10) {
+          // Force kill didn't work — try harder
+          await killByPort();
+          clearInterval(wait);
+          setBotStatus("stopped");
+          botActionRef.current = false;
+        }
       }, 500);
     } catch (err) {
       console.error("Failed to stop bot:", err);
-      setBotStatus("unknown");
+      setBotStatus("stopped");
+      botActionRef.current = false;
     }
   }
 

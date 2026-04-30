@@ -173,18 +173,28 @@ async function callOllamaChat(messages, options = {}) {
     body.tools = options.tools;
   }
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Ollama error (${res.status}): ${errText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Ollama error (${res.status}): ${errText}`);
+    }
+
+    return await res.json();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("fetch failed") || message.includes("ECONNREFUSED")) {
+      throw new Error(
+        `Unable to reach Ollama at ${url}. Make sure Ollama is running and the URL is correct.`,
+      );
+    }
+    throw err;
   }
-
-  return await res.json();
 }
 
 async function callOllamaGenerate(prompt, systemPrompt, options = {}) {
@@ -198,19 +208,29 @@ async function callOllamaGenerate(prompt, systemPrompt, options = {}) {
     stream: false,
   };
 
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  if (!res.ok) {
-    const errText = await res.text();
-    throw new Error(`Ollama error (${res.status}): ${errText}`);
+    if (!res.ok) {
+      const errText = await res.text();
+      throw new Error(`Ollama error (${res.status}): ${errText}`);
+    }
+
+    const data = await res.json();
+    return data.response;
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    if (message.includes("fetch failed") || message.includes("ECONNREFUSED")) {
+      throw new Error(
+        `Unable to reach Ollama at ${url}. Make sure Ollama is running and the URL is correct.`,
+      );
+    }
+    throw err;
   }
-
-  const data = await res.json();
-  return data.response;
 }
 
 // Convert Gemini tool format to Ollama tool format
@@ -1636,19 +1656,35 @@ async function executeFunction(name, args, ctx) {
       await ctx.sendChatAction("typing");
       const statusMsg = await ctx.reply("Generating your document...");
 
-      // Generate the content
-      const content = await llmGenerate(
-        `You are a professional writer. Write the requested content with depth and quality. Use plain text only — no markdown, no asterisks, no headers with #. Write section headings on their own lines. Be comprehensive and thorough.`,
-        prompt,
-        "bot",
-      );
+      let cleanContent;
+      try {
+        // Generate the content
+        const content = await llmGenerate(
+          `You are a professional writer. Write the requested content with depth and quality. Use plain text only — no markdown, no asterisks, no headers with #. Write section headings on their own lines. Be comprehensive and thorough.`,
+          prompt,
+          "bot",
+        );
 
-      const cleanContent = content.trim();
-      lastGeneratedDocument = cleanContent;
-      lastDocumentTitle = filename.replace(/\.[^.]+$/, "");
+        cleanContent = content.trim();
+        lastGeneratedDocument = cleanContent;
+        lastDocumentTitle = filename.replace(/\.[^.]+$/, "");
 
-      // Save to bot's files folder
-      saveBotFile(filename.replace(/\.[^.]+$/, ".txt"), cleanContent);
+        // Save to bot's files folder
+        saveBotFile(filename.replace(/\.[^.]+$/, ".txt"), cleanContent);
+      } catch (err) {
+        console.error("[telegram] Quick generate error:", err);
+        const message = err instanceof Error ? err.message : String(err);
+        try {
+          await ctx.telegram.editMessageText(
+            ctx.chat.id,
+            statusMsg.message_id,
+            undefined,
+            "Failed to generate the document.",
+          );
+        } catch {}
+        await ctx.reply(`Sorry, I couldn't generate the document. ${message}`);
+        return { error: `Quick generate failed: ${message}` };
+      }
 
       // Send based on format
       try {
