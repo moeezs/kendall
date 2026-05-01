@@ -21,26 +21,6 @@ const mammoth = require("mammoth");
 const __dirname = dirname(fileURLToPath(import.meta.url));
 config({ path: join(__dirname, ".env") });
 
-for (const key of ["TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_ID"]) {
-  if (!process.env[key]) {
-    console.error(`❌ Missing required env var: ${key}`);
-    console.error(`   Copy server/.env.example to server/.env and fill it in.`);
-    process.exit(1);
-  }
-}
-
-// telegram user id
-const ALLOWED_USER_ID = parseInt(process.env.TELEGRAM_ALLOWED_USER_ID, 10);
-if (!Number.isFinite(ALLOWED_USER_ID)) {
-  console.error(
-    "❌ Invalid TELEGRAM_ALLOWED_USER_ID: expected a numeric Telegram user ID.",
-  );
-  console.error(
-    "   Check server/.env and ensure TELEGRAM_ALLOWED_USER_ID is set to your numeric Telegram user ID.",
-  );
-  process.exit(1);
-}
-
 function resolveDbPath() {
   if (process.env.DB_PATH) return process.env.DB_PATH;
   const appId = process.env.KENDALL_APP_ID;
@@ -137,6 +117,40 @@ for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
     .prepare("SELECT value FROM settings WHERE key = ?")
     .get(key);
   if (!existing) setSetting(key, value);
+}
+
+// Fallback: override env vars from settings table (for when bot is spawned from frontend)
+function loadSettingsFromDb() {
+  const botToken = getSetting("telegram_bot_token");
+  const allowedUserId = getSetting("telegram_allowed_user_id");
+  if (botToken) process.env.TELEGRAM_BOT_TOKEN = botToken;
+  if (allowedUserId) process.env.TELEGRAM_ALLOWED_USER_ID = allowedUserId;
+}
+loadSettingsFromDb();
+
+// telegram user id (may have been populated from DB now)
+if (!process.env.TELEGRAM_BOT_TOKEN) {
+  console.error(`❌ Missing TELEGRAM_BOT_TOKEN`);
+  console.error(
+    `   Set it in Settings > Telegram Bot Token, or in server/.env`,
+  );
+  process.exit(1);
+}
+
+if (!process.env.TELEGRAM_ALLOWED_USER_ID) {
+  console.error(`❌ Missing TELEGRAM_ALLOWED_USER_ID`);
+  console.error(
+    `   Set it in Settings > Your Telegram User ID, or in server/.env`,
+  );
+  process.exit(1);
+}
+
+const ALLOWED_USER_ID = parseInt(process.env.TELEGRAM_ALLOWED_USER_ID, 10);
+if (!Number.isFinite(ALLOWED_USER_ID)) {
+  console.error(
+    "❌ Invalid TELEGRAM_ALLOWED_USER_ID: expected a numeric Telegram user ID.",
+  );
+  process.exit(1);
 }
 
 // ── LLM Abstraction Layer ──
@@ -647,8 +661,15 @@ function saveDocumentToProjectDir(
   }
 }
 
+// ── Dynamic kendall home directory ──
+function getKendallHome() {
+  const configured = getSetting("kendall_home");
+  if (configured) return configured;
+  return join(os.homedir(), "Desktop", "kendall");
+}
+
 // ── Projects directory ──
-const PROJECTS_DIR = join(os.homedir(), "Desktop", "kendall", "Projects");
+const PROJECTS_DIR = join(getKendallHome(), "Projects");
 
 function ensureProjectsDir() {
   if (!fs.existsSync(PROJECTS_DIR)) {
@@ -657,7 +678,7 @@ function ensureProjectsDir() {
 }
 
 // ── Bot's own folder (memory, generated files, exports) ──
-const BOT_DIR = join(os.homedir(), "Desktop", "kendall", "Kendall");
+const BOT_DIR = join(getKendallHome(), "Kendall");
 const BOT_FILES_DIR = join(BOT_DIR, "Files");
 const BOT_MEMORY_DIR = join(BOT_DIR, "Memory");
 

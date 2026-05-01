@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { mkdir } from "@tauri-apps/plugin-fs";
-import { desktopDir, join } from "@tauri-apps/api/path";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { SystemLog } from "../App";
+import { getDumpPath, kendallPath } from "../lib/paths";
 
 interface HomeProps {
   activeFolders: string[];
@@ -17,8 +17,7 @@ export function HomeSection({ activeFolders, setActiveFolders, logs, setLogs }: 
 
   const handleOpenDump = async () => {
     try {
-      const desktop = await desktopDir();
-      const dumpPath = await join(desktop, "kendall", "Dump");
+      const dumpPath = await getDumpPath();
       await revealItemInDir(dumpPath);
     } catch (err) {
       console.error(err);
@@ -27,8 +26,7 @@ export function HomeSection({ activeFolders, setActiveFolders, logs, setLogs }: 
 
   const handleOpenFolder = async (folderName: string) => {
     try {
-      const desktop = await desktopDir();
-      const path = await join(desktop, "kendall", folderName);
+      const path = await kendallPath(folderName);
       await revealItemInDir(path);
     } catch (err) {
       console.error(err);
@@ -43,8 +41,7 @@ export function HomeSection({ activeFolders, setActiveFolders, logs, setLogs }: 
     }
 
     try {
-      const desktop = await desktopDir();
-      const newFolderPath = await join(desktop, "kendall", folderName);
+      const newFolderPath = await kendallPath(folderName);
       await mkdir(newFolderPath);
       
       if (setActiveFolders) {

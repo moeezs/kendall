@@ -3,7 +3,8 @@ import { Command, type Child } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { writeFile, mkdir, remove } from "@tauri-apps/plugin-fs";
-import { desktopDir, join } from "@tauri-apps/api/path";
+import { kendallPath } from "../lib/paths";
+import { getAllSettings } from "../services/settings";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import {
   createProject, getProjects, deleteProject,
@@ -175,8 +176,7 @@ export function WorkSection() {
 
     // Create project directory on disk
     try {
-      const desktop = await desktopDir();
-      const projectDir = await join(desktop, "kendall", "Projects", name);
+      const projectDir = await kendallPath("Projects", name);
       await mkdir(projectDir, { recursive: true });
     } catch (err) {
       console.error("Failed to create project directory:", err);
@@ -195,8 +195,7 @@ export function WorkSection() {
 
     if (project) {
       try {
-        const desktop = await desktopDir();
-        const projectDir = await join(desktop, "kendall", "Projects", project.name);
+        const projectDir = await kendallPath("Projects", project.name);
         await remove(projectDir, { recursive: true });
       } catch (err) {
         console.error("Failed to remove project directory:", err);
@@ -319,8 +318,7 @@ export function WorkSection() {
 
     const pdfBytes = doc.output("arraybuffer");
 
-    const desktop = await desktopDir();
-    const outPath = await join(desktop, "kendall", `${title.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
+    const outPath = await kendallPath(`${title.replace(/[^a-zA-Z0-9]/g, "_")}.pdf`);
     await writeFile(outPath, new Uint8Array(pdfBytes));
     await revealItemInDir(outPath);
   }
@@ -341,8 +339,7 @@ export function WorkSection() {
     const blob = await Packer.toBlob(doc);
     const arrayBuffer = await blob.arrayBuffer();
 
-    const desktop = await desktopDir();
-    const outPath = await join(desktop, "kendall", `${title.replace(/[^a-zA-Z0-9]/g, "_")}.docx`);
+    const outPath = await kendallPath(`${title.replace(/[^a-zA-Z0-9]/g, "_")}.docx`);
     await writeFile(outPath, new Uint8Array(arrayBuffer));
     await revealItemInDir(outPath);
   }
@@ -382,8 +379,15 @@ export function WorkSection() {
         botActionRef.current = false;
         return;
       }
+      const settings = await getAllSettings();
       const command = Command.create("node", [scriptPath], {
-        env: { KENDALL_APP_ID: appId },
+        env: {
+          KENDALL_APP_ID: import.meta.env.VITE_KENDALL_APP_ID || "com.moeez.kendall",
+          TELEGRAM_BOT_TOKEN: settings.telegram_bot_token,
+          TELEGRAM_ALLOWED_USER_ID: settings.telegram_allowed_user_id,
+          GEMINI_API_KEY: settings.gemini_api_key,
+          OLLAMA_URL: settings.ollama_url,
+        },
       });
       command.stdout.on("data", (line) => {
         console.log("[bot stdout]", line);

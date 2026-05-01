@@ -1,11 +1,12 @@
 import "./App.css";
 import { useEffect, useRef, useState } from "react";
 import { watch, exists, readDir, rename, mkdir } from "@tauri-apps/plugin-fs";
-import { desktopDir, join } from "@tauri-apps/api/path";
+import { join } from "@tauri-apps/api/path";
 import { extractTextFromFile } from "./services/parser";
 import { generateEmbedding } from "./services/ai";
-import { saveFileRecord } from "./services/database";
+import { saveFileRecord, getDb } from "./services/database";
 import { categorizeBatch } from "./services/rag";
+import { getKendallHome, getDumpPath, ensureKendallDirs } from "./lib/paths";
 import { NavBar } from "@/components/ui/navbar";
 import { Home, MessageCircle, Briefcase, Database, Settings } from "lucide-react";
 import { HomeSection } from "@/components/home";
@@ -13,6 +14,8 @@ import { ChatSection } from "@/components/chat";
 import { WorkSection } from "@/components/work";
 import { DbSection } from "@/components/db";
 import { SettingsSection } from "@/components/settings";
+import { OnboardingWizard } from "@/components/onboarding";
+import { initSettings } from "./services/settings";
 
 export interface SystemLog {
   action: string;
@@ -49,20 +52,44 @@ function App() {
       { name: 'Settings', url: '#', icon: Settings },
   ];
 
+  // ── Onboarding state ──
+  const [onboardingComplete, setOnboardingComplete] = useState<boolean | null>(null);
+
   useEffect(() => {
+    async function checkOnboarding() {
+      try {
+        await initSettings();
+        const db = await getDb();
+        const rows = await db.select<{ value: string }[]>(
+          "SELECT value FROM settings WHERE key = 'onboarding_complete'",
+        );
+        setOnboardingComplete(rows.length > 0 && rows[0].value === "true");
+      } catch (err) {
+        console.error("Failed to check onboarding state:", err);
+        setOnboardingComplete(false);
+      }
+    }
+    checkOnboarding();
+  }, []); // only run once on mount
+
+  useEffect(() => {
+    if (!onboardingComplete) return; // Don't start watching until onboarding done
+
     let unwatchFn: () => void;
 
     // We store this mutable copy inside the effect so watcher can access latest folders
     let currentFolders: string[] = [];
 
     const startWatching = async () => {
-      const desktop = await desktopDir();
-      const kendallPath = await join(desktop, "kendall");
-      const dumpPath = await join(kendallPath, "Dump");
+      const kendallDir = await getKendallHome();
+      const dumpPath = await getDumpPath();
       
+      // Ensure directories exist
+      await ensureKendallDirs();
+
       // Fetch dynamic folders on startup
       try {
-        const entries = await readDir(kendallPath); 
+        const entries = await readDir(kendallDir); 
         const foldersOnly = entries
           .filter(entry => entry.isDirectory && entry.name !== "Dump" && !entry.name.startsWith("."))
           .map(entry => entry.name);
@@ -163,7 +190,7 @@ function App() {
                 
                 let finalFilePath = file.filePath;
                 if (targetFolderName && targetFolderName !== "Dump") {
-                  const folderPath = await join(kendallPath, targetFolderName);
+                  const folderPath = await (await import("./lib/paths")).kendallPath(targetFolderName);
                   
                   // Auto-create folder tracking
                   const folderExists = await exists(folderPath);
@@ -243,9 +270,28 @@ function App() {
         }
       } 
     };
-  }, []);
+  }, [onboardingComplete]);
 
+  // Loading screen
+  if (onboardingComplete === null) {
+    return (
+      <div className="h-screen w-screen bg-[#18181b] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <img src="/tauri.svg" alt="Kendall" className="h-16 w-16" />
+          <p className="text-[#acabab] text-sm animate-pulse">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
+  // Onboarding wizard
+  if (!onboardingComplete) {
+    return (
+      <OnboardingWizard onComplete={() => setOnboardingComplete(true)} />
+    );
+  }
+
+  // Normal app
   return (
     <div className="bg-[#18181b] text-[#e7e5e5] h-screen w-screen overflow-hidden flex flex-col font-sans selection:bg-[#adc6ff]/30">
       <NavBar items={navItems} activeTab={activeTab} setActiveTab={setActiveTab} />

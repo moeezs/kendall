@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-
-const STATUS_PORT = 3721;
-const SETTINGS_URL = `http://127.0.0.1:${STATUS_PORT}/settings`;
+import { getAllSettings, setSetting } from "../services/settings";
 
 interface Settings {
   provider: string;
@@ -19,6 +17,8 @@ interface Settings {
   work_ollama_model: string;
   autosort_gemini_model: string;
   autosort_ollama_model: string;
+  telegram_bot_token: string;
+  telegram_allowed_user_id: string;
   [key: string]: string;
 }
 
@@ -49,25 +49,21 @@ export function SettingsSection() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
-  const [botOnline, setBotOnline] = useState(false);
   const [ollamaModels, setOllamaModels] = useState<string[]>([]);
   const [ollamaOnline, setOllamaOnline] = useState(false);
+  const [showKeysModal, setShowKeysModal] = useState(false);
 
   useEffect(() => { loadSettings(); }, []);
-  useEffect(() => {
-    if (settings?.ollama_url) checkOllama(settings.ollama_url);
-  }, [settings?.ollama_url]);
 
   async function loadSettings() {
     setLoading(true);
     try {
-      const res = await fetch(SETTINGS_URL, { signal: AbortSignal.timeout(3000) });
-      if (!res.ok) throw new Error();
-      setSettings(await res.json());
-      setBotOnline(true);
-    } catch {
-      setError("Bot server is offline.");
-      setBotOnline(false);
+      const s = await getAllSettings();
+      setSettings(s);
+      if (s.ollama_url) checkOllama(s.ollama_url);
+    } catch (err) {
+      console.error("Failed to load settings:", err);
+      setError("Failed to load settings");
     } finally {
       setLoading(false);
     }
@@ -86,17 +82,13 @@ export function SettingsSection() {
 
   async function save(updates: Partial<Settings>) {
     try {
-      const res = await fetch(SETTINGS_URL, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(updates),
-      });
-      if (!res.ok) throw new Error();
+      for (const [key, value] of Object.entries(updates)) {
+        await setSetting(key, value as string);
+      }
       setToast("Saved");
       setTimeout(() => setToast(null), 1200);
     } catch {
-      // On failure reload from server to revert to actual saved state
-      loadSettings();
+      await loadSettings();
       setError("Failed to save");
       setTimeout(() => setError(null), 2000);
     }
@@ -110,7 +102,7 @@ export function SettingsSection() {
 
   if (loading) {
     return (
-      <main className="flex-1 flex items-center justify-center bg-[#18181b] -mx-8 -mb-20">
+      <main className="flex-1 flex items-center justify-center bg-[#18181b]">
         <p className="text-gray-500 text-sm">Loading...</p>
       </main>
     );
@@ -119,50 +111,25 @@ export function SettingsSection() {
   const ollamaList = ollamaModels.length > 0 ? ollamaModels : FALLBACK_OLLAMA;
 
   return (
-    <main className="flex-1 flex flex-col bg-[#18181b] overflow-y-auto -mx-8 -mb-20 pt-24 pb-12 px-6">
+    <main className="flex-1 flex flex-col bg-[#18181b] overflow-y-auto pb-12">
       <div className="max-w-2xl mx-auto w-full space-y-5">
         <div className="flex items-center justify-between">
           <h1 className="text-lg font-semibold text-white">Settings</h1>
-          <div className="flex gap-2 items-center">
+          <div className="flex items-center gap-3">
             {toast && <span className="text-xs text-green-400 bg-green-500/10 px-2 py-0.5 rounded">{toast}</span>}
             {error && <span className="text-xs text-red-400 bg-red-500/10 px-2 py-0.5 rounded">{error}</span>}
+            <button
+              onClick={() => setShowKeysModal(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white text-xs font-medium rounded-lg transition-colors cursor-pointer"
+            >
+              <span className="material-symbols-outlined text-sm">key</span>
+              Keys
+            </button>
           </div>
         </div>
 
-        {!botOnline ? (
-          <div className="bg-white/5 border border-white/10 rounded-xl p-8 text-center">
-            <p className="text-gray-400 text-sm">Bot server is offline</p>
-            <p className="text-gray-500 text-xs mt-1">Start the bot from the Work tab first</p>
-          </div>
-        ) : settings && (
+        {settings && (
           <>
-            {/* Connection row */}
-            <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 space-y-3">
-              <div className="flex gap-2 items-center">
-                <input
-                  type="password"
-                  value={settings.gemini_api_key}
-                  onChange={(e) => setSettings({ ...settings, gemini_api_key: e.target.value })}
-                  placeholder="Gemini API Key"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-blue-500/40"
-                />
-                <button onClick={() => save({ gemini_api_key: settings.gemini_api_key })}
-                  className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white text-xs rounded-lg transition-colors">Save</button>
-              </div>
-              <div className="flex gap-2 items-center">
-                <input
-                  type="text"
-                  value={settings.ollama_url}
-                  onChange={(e) => setSettings({ ...settings, ollama_url: e.target.value })}
-                  placeholder="Ollama URL"
-                  className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-white text-sm placeholder-gray-500 focus:outline-none focus:border-emerald-500/40"
-                />
-                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${ollamaOnline ? "bg-green-400" : "bg-red-400"}`} />
-                <button onClick={() => { save({ ollama_url: settings.ollama_url }); checkOllama(settings.ollama_url); }}
-                  className="px-3 py-1.5 bg-white/10 hover:bg-white/15 text-white text-xs rounded-lg transition-colors">Save</button>
-              </div>
-            </div>
-
             {/* Feature table */}
             <div className="bg-white/[0.03] border border-white/[0.06] rounded-xl overflow-hidden">
               {/* Header */}
@@ -218,6 +185,113 @@ export function SettingsSection() {
           </>
         )}
       </div>
+
+      {/* ── Keys Modal ── */}
+      {showKeysModal && settings && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-[#18181b] border border-[#474848]/30 rounded-xl p-6 w-full max-w-lg shadow-2xl">
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="text-lg font-bold text-[#e7e5e5]">API Keys & Connections</h3>
+              <button onClick={() => setShowKeysModal(false)} className="text-[#acabab] hover:text-[#e7e5e5] cursor-pointer">
+                <span className="material-symbols-outlined">close</span>
+              </button>
+            </div>
+
+            <div className="space-y-5">
+              {/* Gemini API Key */}
+              <div>
+                <label className="text-xs font-bold text-[#acabab] uppercase tracking-widest mb-2 block">
+                  Google Gemini API Key
+                </label>
+                <p className="text-[10px] text-[#acabab]/60 mb-2">
+                  Required for Gemini. Get a free key at{" "}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-[#adc6ff] hover:underline">
+                    Google AI Studio
+                  </a>
+                </p>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="password"
+                    value={settings.gemini_api_key}
+                    onChange={(e) => setSettings({ ...settings, gemini_api_key: e.target.value })}
+                    placeholder="Enter your Gemini API key"
+                    className="flex-1 bg-[#202022] border border-[#474848]/30 rounded-lg px-3 py-2 text-sm text-[#e7e5e5] placeholder:text-[#acabab]/50 focus:outline-none focus:border-[#adc6ff]/50"
+                  />
+                  <button onClick={() => save({ gemini_api_key: settings.gemini_api_key })}
+                    className="px-3 py-2 bg-[#adc6ff] text-[#003d87] text-xs font-bold rounded-lg hover:bg-[#97b9ff] transition-colors cursor-pointer">Save</button>
+                </div>
+              </div>
+
+              {/* Ollama URL */}
+              <div>
+                <label className="text-xs font-bold text-[#acabab] uppercase tracking-widest mb-2 block">
+                  Ollama URL
+                </label>
+                <p className="text-[10px] text-[#acabab]/60 mb-2">
+                  URL of your running Ollama instance.{" "}
+                  <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" className="text-[#adc6ff] hover:underline">
+                    Download Ollama
+                  </a>
+                </p>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={settings.ollama_url}
+                    onChange={(e) => setSettings({ ...settings, ollama_url: e.target.value })}
+                    placeholder="http://localhost:11434"
+                    className="flex-1 bg-[#202022] border border-[#474848]/30 rounded-lg px-3 py-2 text-sm text-[#e7e5e5] placeholder:text-[#acabab]/50 focus:outline-none focus:border-emerald-500/40"
+                  />
+                  <span className={`w-2 h-2 rounded-full shrink-0 ${ollamaOnline ? "bg-green-400" : "bg-red-400"}`} />
+                  <button onClick={() => { save({ ollama_url: settings.ollama_url }); checkOllama(settings.ollama_url); }}
+                    className="px-3 py-2 bg-[#adc6ff] text-[#003d87] text-xs font-bold rounded-lg hover:bg-[#97b9ff] transition-colors cursor-pointer">Save</button>
+                </div>
+              </div>
+
+              {/* Telegram Bot Token */}
+              <div>
+                <label className="text-xs font-bold text-[#acabab] uppercase tracking-widest mb-2 block">
+                  Telegram Bot Token
+                </label>
+                <p className="text-[10px] text-[#acabab]/60 mb-2">
+                  Message <span className="text-[#adc6ff]">@BotFather</span> on Telegram to create a bot and get its token.
+                </p>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="password"
+                    value={settings.telegram_bot_token}
+                    onChange={(e) => setSettings({ ...settings, telegram_bot_token: e.target.value })}
+                    placeholder="Paste your Telegram Bot Token"
+                    className="flex-1 bg-[#202022] border border-[#474848]/30 rounded-lg px-3 py-2 text-sm text-[#e7e5e5] placeholder:text-[#acabab]/50 focus:outline-none focus:border-[#adc6ff]/50"
+                  />
+                  <button onClick={() => save({ telegram_bot_token: settings.telegram_bot_token })}
+                    className="px-3 py-2 bg-[#adc6ff] text-[#003d87] text-xs font-bold rounded-lg hover:bg-[#97b9ff] transition-colors cursor-pointer">Save</button>
+                </div>
+              </div>
+
+              {/* Telegram User ID */}
+              <div>
+                <label className="text-xs font-bold text-[#acabab] uppercase tracking-widest mb-2 block">
+                  Your Telegram User ID
+                </label>
+                <p className="text-[10px] text-[#acabab]/60 mb-2">
+                  Message <span className="text-[#adc6ff]">@userinfobot</span> on Telegram to get your numeric user ID.
+                </p>
+                <div className="flex gap-2 items-center">
+                  <input
+                    type="text"
+                    value={settings.telegram_allowed_user_id}
+                    onChange={(e) => setSettings({ ...settings, telegram_allowed_user_id: e.target.value })}
+                    placeholder="Your numeric Telegram User ID"
+                    className="flex-1 bg-[#202022] border border-[#474848]/30 rounded-lg px-3 py-2 text-sm text-[#e7e5e5] placeholder:text-[#acabab]/50 focus:outline-none focus:border-[#adc6ff]/50"
+                  />
+                  <button onClick={() => save({ telegram_allowed_user_id: settings.telegram_allowed_user_id })}
+                    className="px-3 py-2 bg-[#adc6ff] text-[#003d87] text-xs font-bold rounded-lg hover:bg-[#97b9ff] transition-colors cursor-pointer">Save</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

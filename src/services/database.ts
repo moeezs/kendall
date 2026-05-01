@@ -68,6 +68,14 @@ async function initDb(db: Database) {
       FOREIGN KEY(file_id) REFERENCES files(id) ON DELETE CASCADE
     );
   `);
+
+  // Ensure settings table exists (can also be created by the server)
+  await db.execute(`
+    CREATE TABLE IF NOT EXISTS settings (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    )
+  `);
 }
 
 export async function saveFileRecord(

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "kendall",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "identifier": "com.moeez.kendall",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -23,13 +23,17 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": "dmg",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "copyright": "© 2026 Kendall",
+    "category": "Productivity",
+    "shortDescription": "A local-first personal AI OS",
+    "longDescription": "Drop files into a folder and they get automatically sorted. Ask questions across all your documents. Build projects and generate polished docs from your research. Control everything from your desktop — or from Telegram, on the go."
   }
 }

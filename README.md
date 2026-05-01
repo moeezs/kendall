@@ -74,19 +74,32 @@ Sorts files into the right folders automatically, then asks the Chat tab when an
 
 ---
 
-## Setup
+## Download
 
-### Desktop App
+### Latest Release
+
+Download the latest `.dmg` from the [Releases page](https://github.com/moeezs/kendall/releases).
+
+1. Download the `.dmg` file
+2. Open it and drag **Kendall** to your **Applications** folder
+3. Launch Kendall from Applications
+
+On first launch, the **onboarding wizard** will guide you through:
+
+1. **Choosing your Kendall home directory** (default: `~/Desktop/kendall`)
+2. **Setting up AI** — Google Gemini (API key) or Ollama (local, no API key)
+3. **Configuring Telegram bot** (optional — can skip and set up later)
+4. Done — Kendall creates the folder structure and starts watching your Dump folder
+
+### Build from Source
 
 **Prerequisites:** Node.js, Rust, and the [Tauri v2 prerequisites](https://tauri.app/start/prerequisites/) for macOS.
 
 ```bash
-# Install frontend dependencies
+# Clone and install
+git clone https://github.com/moeezs/kendall.git
+cd kendall
 npm install
-
-# Copy the environment file and add your Gemini API key
-cp .env.example .env
-# Set VITE_GEMINI_API_KEY=your_key_here in .env
 
 # Run in development
 npm run tauri dev
@@ -95,21 +108,26 @@ npm run tauri dev
 npm run tauri build
 ```
 
-On first launch, Kendall creates `~/Desktop/kendall/Dump/` and starts watching it immediately.
+> **Note:** The `.env` file is no longer required — all settings are configured through the onboarding wizard or the Settings tab in the app.
 
 ### Telegram Bot
+
+Start the bot directly from the **Work** tab in the desktop app using the **Bot** toggle.
+
+Alternatively, run it separately:
 
 ```bash
 cd server
 npm install
 
+# Copy the example env (optional if running from the app — settings sync from DB)
 cp .env.example .env
 # Fill in server/.env (see below)
 
 npm start
 ```
 
-**Required environment variables** in `server/.env`:
+**Environment variables** (in `server/.env` or set via app Settings):
 
 | Variable                   | Description                                                        |
 | -------------------------- | ------------------------------------------------------------------ |
@@ -120,8 +138,6 @@ npm start
 | `DB_PATH`                  | (Optional) Full path to `kendall.db` — overrides auto-detection    |
 
 The bot uses long polling. No webhooks, no ngrok, no port forwarding needed.
-
-Alternatively, start the bot directly from the **Work** tab in the desktop app using the **Bot** toggle.
 
 ---
 
